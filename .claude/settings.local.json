@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(flutter build *)",
+      "Bash(flutter pub *)",
+      "Read(//c/Users/sebio/AppData/Local/Pub/Cache/hosted/pub.dev/chessground-9.0.0/lib//**)",
+      "Read(//c/Users/sebio/AppData/Local/Pub/Cache/hosted/pub.dev/chessground-9.0.0/example/lib//**)",
+      "Read(//c/Users/sebio/AppData/Local/Pub/Cache/hosted/pub.dev/dartchess-0.12.3/lib/src//**)",
+      "Read(//c/Users/sebio/AppData/Local/Pub/Cache/hosted/pub.dev/dartchess-0.12.3/lib/src/**)",
+      "Bash(grep -n \"static Setup parseFen\\\\|Setup parseFen\\\\|Setup\\\\\\\\.parseFen\" \"/c/Users/sebio/AppData/Local/Pub/Cache/hosted/pub.dev/dartchess-0.12.3/lib/src/setup.dart\")",
+      "Bash(flutter analyze *)",
+      "Bash(flutter test *)",
+      "Bash(dart run *)",
+      "Bash(flutter doctor *)",
+      "Bash(flutter --version)",
+      "Bash(flutter devices *)",
+      "Bash(dart --version)",
+      "Bash(zstd --version)",
+      "PowerShell(winget install --id Facebook.Zstandard --accept-source-agreements --accept-package-agreements --silent)",
+      "PowerShell(winget search zstandard 2>&1)",
+      "Bash(\"/c/Users/sebio/AppData/Local/Microsoft/WinGet/Packages/Meta.Zstandard_Microsoft.Winget.Source_8wekyb3d8bbwe/zstd-v1.5.7-win64/zstd.exe\" --version)",
+      "Bash(mkdir -p /c/dev/lichess_data)",
+      "Read(//c/dev/**)",
+      "Bash(curl -L -o lichess_db_puzzle.csv.zst \"https://database.lichess.org/lichess_db_puzzle.csv.zst\")",
+      "Bash(\"/c/Users/sebio/AppData/Local/Microsoft/WinGet/Packages/Meta.Zstandard_Microsoft.Winget.Source_8wekyb3d8bbwe/zstd-v1.5.7-win64/zstd.exe\" -d /c/dev/lichess_data/lichess_db_puzzle.csv.zst -o /c/dev/lichess_data/lichess_db_puzzle.csv)",
+      "Bash(flutter install *)",
+      "Bash(flutter clean *)",
+      "Bash(./gradlew --stop)",
+      "PowerShell($adb = \"C:\\\\Users\\\\sebio\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\"; & $adb -s 36291JEHN05094 install -r c:\\\\dev\\\\woodpecker_chess\\\\build\\\\app\\\\outputs\\\\flutter-apk\\\\app-arm64-v8a-release.apk)",
+      "PowerShell($adb = \"C:\\\\Users\\\\sebio\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\"; & $adb kill-server; Start-Sleep -Seconds 2; & $adb start-server; Start-Sleep -Seconds 2; & $adb devices; & $adb -s 36291JEHN05094 install -r c:\\\\dev\\\\woodpecker_chess\\\\build\\\\app\\\\outputs\\\\flutter-apk\\\\app-arm64-v8a-release.apk)",
+      "Bash(curl -sSL -o correct.mp3 \"https://raw.githubusercontent.com/lichess-org/lila/master/public/sound/standard/Confirmation.mp3\")",
+      "Bash(curl -sSL -o round_complete.mp3 \"https://raw.githubusercontent.com/lichess-org/lila/master/public/sound/standard/Victory.mp3\")",
+      "Bash(curl -sSL -o check.mp3 \"https://raw.githubusercontent.com/lichess-org/lila/master/public/sound/standard/Berserk.mp3\")",
+      "Bash(curl -sSL -o round_complete.mp3 \"https://raw.githubusercontent.com/lichess-org/lila/master/public/sound/standard/SocialNotify.mp3\")"
+    ]
+  }
+}

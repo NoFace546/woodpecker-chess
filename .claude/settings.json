@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-Process | Where-Object { $_.Name -match \"java|dart|flutter|gradle|kotlin\" } | Select-Object Id, Name, Path | Format-Table -AutoSize)",
+      "Bash(adb -s 36291JEHN05094 install -r c:/dev/woodpecker_chess/build/app/outputs/flutter-apk/app-debug.apk)",
+      "PowerShell($adb = \\(Get-ChildItem -Path \"$env:LOCALAPPDATA\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\", \"$env:ANDROID_HOME\\\\platform-tools\\\\adb.exe\", \"$env:USERPROFILE\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\" -ErrorAction SilentlyContinue | Select-Object -First 1\\).FullName; Write-Output \"ADB: $adb\"; if \\($adb\\) { & $adb -s 36291JEHN05094 install -r c:\\\\dev\\\\woodpecker_chess\\\\build\\\\app\\\\outputs\\\\flutter-apk\\\\app-debug.apk })",
+      "PowerShell($adb = \"C:\\\\Users\\\\sebio\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\"; & $adb -s 36291JEHN05094 shell pm list packages | Select-String \"woodpecker\")",
+      "PowerShell($adb = \"C:\\\\Users\\\\sebio\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\"; & $adb -s 36291JEHN05094 shell monkey -p com.woodpecker.chess -c android.intent.category.LAUNCHER 1 2>&1 | Select-Object -Last 5)",
+      "PowerShell($adb = \"C:\\\\Users\\\\sebio\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\"; & $adb -s 36291JEHN05094 shell pidof com.woodpecker.chess; Write-Output \"---LOGCAT--\"; & $adb -s 36291JEHN05094 logcat -d -t 300 | Select-String -Pattern \"woodpecker|flutter|drift|sqlite|FATAL|AndroidRuntime\" | Select-Object -Last 40)",
+      "PowerShell($adb = \"C:\\\\Users\\\\sebio\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\"; & $adb -s 36291JEHN05094 logcat -d -t 500 --pid=20301 2>&1 | Select-Object -Last 50)",
+      "WebSearch",
+      "WebFetch(domain:pub.dev)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Read(//c/Users/sebio/AppData/Local/Pub/Cache/hosted/pub.dev/**)",
+      "Bash(find ~/AppData/Local/Pub/Cache/hosted/pub.dev/chessground-* -maxdepth 3 -name \"*.dart\")",
+      "PowerShell($adb = \"C:\\\\Users\\\\sebio\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\"; & $adb -s 36291JEHN05094 install -r c:\\\\dev\\\\woodpecker_chess\\\\build\\\\app\\\\outputs\\\\flutter-apk\\\\app-debug.apk)",
+      "PowerShell($adb = \"C:\\\\Users\\\\sebio\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\"; & $adb -s 36291JEHN05094 shell monkey -p com.woodpecker.chess -c android.intent.category.LAUNCHER 1 2>&1 | Select-Object -Last 3)",
+      "PowerShell($adb = \"C:\\\\Users\\\\sebio\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\"; & $adb -s 36291JEHN05094 install -r c:\\\\dev\\\\woodpecker_chess\\\\build\\\\app\\\\outputs\\\\flutter-apk\\\\app-arm64-v8a-release.apk)",
+      "PowerShell($adb = \"C:\\\\Users\\\\sebio\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\"; & $adb -s 36291JEHN05094 shell monkey -p com.woodpecker.chess -c android.intent.category.LAUNCHER 1 2>&1 | Select-Object -Last 3; Start-Sleep -Seconds 4; $pid_ = & $adb -s 36291JEHN05094 shell pidof com.woodpecker.chess; Write-Output \"PID: $pid_\"; & $adb -s 36291JEHN05094 logcat -d -t 500 --pid=$pid_ 2>&1 | Select-String -Pattern \"Stockfish|stockfish|FATAL|AndroidRuntime|R8|missing_method|UnsatisfiedLinkError\" | Select-Object -Last 20)",
+      "Bash(gzip -kf assets/db/puzzles.sqlite)",
+      "PowerShell($apk = \"c:\\\\dev\\\\woodpecker_chess\\\\build\\\\app\\\\outputs\\\\flutter-apk\\\\app-release.apk\"; if \\(Test-Path $apk\\) { Add-Type -AssemblyName System.IO.Compression.FileSystem; $zip = [System.IO.Compression.ZipFile]::OpenRead\\($apk\\); $zip.Entries | Where-Object { $_.Length -gt 1MB } | Sort-Object -Property Length -Descending | Select-Object -First 20 | ForEach-Object { \"{0,8:N1} MB  {1}\" -f \\($_.Length/1MB\\), $_.FullName }; $zip.Dispose\\(\\) })",
+      "PowerShell(Add-Type -AssemblyName System.IO.Compression.FileSystem; $zip = [System.IO.Compression.ZipFile]::OpenRead\\(\"c:\\\\dev\\\\woodpecker_chess\\\\build\\\\app\\\\outputs\\\\flutter-apk\\\\app-arm64-v8a-release.apk\"\\); $zip.Entries | Where-Object { $_.Length -gt 500KB } | Sort-Object -Property Length -Descending | Select-Object -First 25 | ForEach-Object { \"{0,8:N1} MB  {1}\" -f \\($_.Length/1MB\\), $_.FullName }; $zip.Dispose\\(\\))",
+      "PowerShell($adb = \"C:\\\\Users\\\\sebio\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\"; & $adb -s 36291JEHN05094 shell monkey -p com.woodpecker.chess -c android.intent.category.LAUNCHER 1 2>&1 | Select-Object -Last 2; Start-Sleep -Seconds 6; $pid_ = & $adb -s 36291JEHN05094 shell pidof com.woodpecker.chess; Write-Output \"PID: $pid_\"; & $adb -s 36291JEHN05094 logcat -d -t 1000 --pid=$pid_ 2>&1 | Select-String -Pattern \"FATAL|AndroidRuntime|gzip|sqlite|drift|woodpecker\" | Select-Object -Last 15)",
+      "Bash(gunzip -k assets/db/puzzles.sqlite.gz)",
+      "PowerShell($adb = \"C:\\\\Users\\\\sebio\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\"; & $adb -s 36291JEHN05094 shell monkey -p com.woodpecker.chess -c android.intent.category.LAUNCHER 1 2>&1 | Select-Object -Last 2; Start-Sleep -Seconds 5; $pid_ = & $adb -s 36291JEHN05094 shell pidof com.woodpecker.chess; Write-Output \"PID: $pid_\"; & $adb -s 36291JEHN05094 logcat -d -t 1000 --pid=$pid_ 2>&1 | Select-String -Pattern \"FATAL|AndroidRuntime|drift|migration|sqlite\" | Select-Object -Last 15)",
+      "PowerShell($adb = \"C:\\\\Users\\\\sebio\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\"; & $adb devices; & $adb -s 36291JEHN05094 install -r c:\\\\dev\\\\woodpecker_chess\\\\build\\\\app\\\\outputs\\\\flutter-apk\\\\app-arm64-v8a-release.apk)",
+      "PowerShell($adb = \"C:\\\\Users\\\\sebio\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\"; Start-Sleep -Seconds 3; & $adb devices; & $adb -s 36291JEHN05094 install -r c:\\\\dev\\\\woodpecker_chess\\\\build\\\\app\\\\outputs\\\\flutter-apk\\\\app-arm64-v8a-release.apk)"
+    ],
+    "additionalDirectories": [
+      "c:\\dev\\woodpecker_chess\\build\\app\\outputs\\flutter-apk"
+    ]
+  }
+}
