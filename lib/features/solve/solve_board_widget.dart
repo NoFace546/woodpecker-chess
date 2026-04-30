@@ -6,8 +6,11 @@ import 'package:fast_immutable_collections/fast_immutable_collections.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../services/app_preferences.dart';
+import '../../services/board_appearance.dart';
 import '../../services/sound_service.dart';
 import '../../services/stockfish_service.dart';
+import '../../widgets/captured_row.dart';
 import 'puzzle.dart';
 import 'solve_board_controller.dart';
 import 'solve_state.dart';
@@ -34,6 +37,8 @@ class SolveBoardWidget extends ConsumerStatefulWidget {
 
 class _SolveBoardWidgetState extends ConsumerState<SolveBoardWidget> {
   late SolveBoardController _controller;
+  String? _validMovesFen;
+  IMap<Square, ISet<Square>>? _validMovesCache;
 
   @override
   void initState() {
@@ -48,6 +53,7 @@ class _SolveBoardWidgetState extends ConsumerState<SolveBoardWidget> {
       onResult: widget.onResult,
       stockfish: ref.read(stockfishServiceProvider),
       sound: ref.read(soundServiceProvider),
+      animDuration: () => ref.read(animationSpeedProvider).duration,
     );
   }
 
@@ -76,10 +82,36 @@ class _SolveBoardWidgetState extends ConsumerState<SolveBoardWidget> {
   @override
   Widget build(BuildContext context) {
     final state = _controller.state;
-    final shapes = _hintShapes(state);
+    final shapes = _shapes(state);
+    final boardTheme = ref.watch(boardThemeProvider);
+    final pieceSet = ref.watch(pieceSetProvider);
+    final showCoords = ref.watch(showCoordinatesProvider);
+    final showMoves = ref.watch(showLegalMovesProvider);
+    final animSpeed = ref.watch(animationSpeedProvider);
+    final autoFlip = ref.watch(autoFlipBoardProvider);
+    final orientation = autoFlip ? state.userSide : Side.white;
+    final initial = widget.puzzle.initialPosition;
+    // Asymmetric animation: when the user just moved (turn now opponent's),
+    // jump instantly. Animate only opponent moves so the user can actually
+    // see what the opponent played. The setup move also jumps instantly
+    // because the first animation right after the screen mounts tends to
+    // be janky (cold widget tree, image cache, etc.). During Show Solution
+    // playback the user is watching, so animate everything.
+    final movedBySide = state.position.turn.opposite;
+    final isUserMove = state.lastMove != null && movedBySide == state.userSide;
+    final isReplay = state.status == SolveStatus.revealed;
+    final shouldInstant = isUserMove && !isReplay;
+    final animDuration =
+        shouldInstant ? Duration.zero : animSpeed.duration;
     return Column(
       children: [
         _Hud(state: state),
+        CapturedRow(
+          captorSide: orientation.opposite,
+          initialPosition: initial,
+          currentPosition: state.position,
+          pieceAssets: pieceSet.assets,
+        ),
         Expanded(
           child: Center(
             child: LayoutBuilder(
@@ -88,15 +120,22 @@ class _SolveBoardWidgetState extends ConsumerState<SolveBoardWidget> {
                   constraints.maxWidth,
                   constraints.maxHeight,
                 );
-                return Chessboard(
+                final lastTo = state.lastMove?.to;
+                return RepaintBoundary(
+                  child: Stack(
+                    children: [
+                  Chessboard(
                   size: size,
-                  orientation: state.userSide,
+                  orientation: autoFlip ? state.userSide : Side.white,
                   fen: state.position.fen,
                   lastMove: state.lastMove,
                   shapes: shapes,
-                  settings: const ChessboardSettings(
-                    enableCoordinates: true,
-                    animationDuration: Duration(milliseconds: 200),
+                  settings: ChessboardSettings(
+                    enableCoordinates: showCoords,
+                    showValidMoves: showMoves,
+                    animationDuration: animDuration,
+                    colorScheme: boardTheme.colors,
+                    pieceAssets: pieceSet.assets,
                   ),
                   game: GameData(
                     playerSide: _playerSide(state),
@@ -115,10 +154,25 @@ class _SolveBoardWidgetState extends ConsumerState<SolveBoardWidget> {
                       }
                     },
                   ),
+                  ),
+                  if (lastTo != null)
+                    LastMoveSquareBorder(
+                      to: lastTo,
+                      orientation: autoFlip ? state.userSide : Side.white,
+                      boardSize: size,
+                    ),
+                    ],
+                  ),
                 );
               },
             ),
           ),
+        ),
+        CapturedRow(
+          captorSide: orientation,
+          initialPosition: initial,
+          currentPosition: state.position,
+          pieceAssets: pieceSet.assets,
         ),
         widget.statusBarBuilder?.call(context, state, _controller) ??
             _DefaultStatusBar(state: state, controller: _controller),
@@ -127,23 +181,91 @@ class _SolveBoardWidgetState extends ConsumerState<SolveBoardWidget> {
   }
 
   PlayerSide _playerSide(SolveState state) {
-    if (state.status != SolveStatus.playing) return PlayerSide.none;
+    final canMove = state.status == SolveStatus.playing ||
+        state.status == SolveStatus.exploring;
+    if (!canMove) return PlayerSide.none;
+    if (state.status == SolveStatus.exploring) {
+      // In exploring mode, allow moves for whichever side is to move.
+      return state.position.turn == Side.white
+          ? PlayerSide.white
+          : PlayerSide.black;
+    }
     return state.userSide == Side.white ? PlayerSide.white : PlayerSide.black;
   }
 
   IMap<Square, ISet<Square>> _validMoves(SolveState state) {
-    if (state.status != SolveStatus.playing) {
+    if (state.status != SolveStatus.playing &&
+        state.status != SolveStatus.exploring) {
       return const IMap<Square, ISet<Square>>.empty();
     }
-    return makeLegalMoves(state.position);
+    final fen = state.position.fen;
+    if (_validMovesFen == fen && _validMovesCache != null) {
+      return _validMovesCache!;
+    }
+    final moves = makeLegalMoves(state.position);
+    _validMovesFen = fen;
+    _validMovesCache = moves;
+    return moves;
   }
 
-  ISet<Shape>? _hintShapes(SolveState state) {
-    final from = state.hintFromSquare;
-    if (from == null) return null;
-    return ISet<Shape>({
-      Circle(color: const Color(0xAAEEAA00), orig: from, scale: 0.95),
-    });
+  ISet<Shape>? _shapes(SolveState state) {
+    final shapes = <Shape>{};
+    final hintFrom = state.hintFromSquare;
+    if (hintFrom != null) {
+      shapes.add(
+        Circle(color: const Color(0xAAEEAA00), orig: hintFrom, scale: 0.95),
+      );
+    }
+    if (shapes.isEmpty) return null;
+    return ISet(shapes);
+  }
+}
+
+/// Yellow border around the destination square of the most recent move.
+/// Painted as an overlay on top of the Chessboard since chessground's
+/// Shape API only supports circles and arrows.
+class LastMoveSquareBorder extends StatelessWidget {
+  const LastMoveSquareBorder({
+    super.key,
+    required this.to,
+    required this.orientation,
+    required this.boardSize,
+    this.color = const Color(0xCCFFD600),
+    this.thickness = 3,
+  });
+
+  final Square to;
+  final Side orientation;
+  final double boardSize;
+  final Color color;
+  final double thickness;
+
+  @override
+  Widget build(BuildContext context) {
+    final sqSize = boardSize / 8;
+    final fileIdx = to.value & 7;
+    final rankIdx = to.value >> 3;
+    final double xIdx, yIdx;
+    if (orientation == Side.white) {
+      xIdx = fileIdx.toDouble();
+      yIdx = (7 - rankIdx).toDouble();
+    } else {
+      xIdx = (7 - fileIdx).toDouble();
+      yIdx = rankIdx.toDouble();
+    }
+    return Positioned(
+      left: xIdx * sqSize,
+      top: yIdx * sqSize,
+      width: sqSize,
+      height: sqSize,
+      child: IgnorePointer(
+        child: Container(
+          decoration: BoxDecoration(
+            border: Border.all(color: color, width: thickness),
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -180,15 +302,16 @@ class _Hud extends StatelessWidget {
   }
 }
 
-class _DefaultStatusBar extends StatelessWidget {
+class _DefaultStatusBar extends ConsumerWidget {
   const _DefaultStatusBar({required this.state, required this.controller});
 
   final SolveState state;
   final SolveBoardController controller;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final feedback = solveStatusFeedback(context, state);
+    final hintsEnabled = ref.watch(hintsEnabledProvider);
     return Container(
       width: double.infinity,
       color: feedback.color,
@@ -201,18 +324,19 @@ class _DefaultStatusBar extends StatelessWidget {
               style: Theme.of(context).textTheme.titleMedium,
             ),
           ),
-          if (state.status == SolveStatus.playing &&
+          if (hintsEnabled &&
+              state.status == SolveStatus.playing &&
               state.hintFromSquare == null)
-            TextButton.icon(
+            IconButton(
               onPressed: controller.requestHint,
               icon: const Icon(Icons.lightbulb_outline),
-              label: const Text('Hint'),
+              tooltip: 'Hint',
             ),
           if (canShowSolution(state.status))
-            TextButton.icon(
+            IconButton(
               onPressed: controller.revealSolution,
               icon: const Icon(Icons.visibility_outlined),
-              label: const Text('Show solution'),
+              tooltip: 'Show solution',
             ),
           if (state.status == SolveStatus.evaluating)
             const SizedBox(
@@ -230,7 +354,8 @@ bool canShowSolution(SolveStatus status) {
   return status == SolveStatus.playing ||
       status == SolveStatus.wrong ||
       status == SolveStatus.inaccuracy ||
-      status == SolveStatus.almostBest;
+      status == SolveStatus.almostBest ||
+      status == SolveStatus.exploring;
 }
 
 class StatusFeedback {
@@ -244,13 +369,13 @@ StatusFeedback solveStatusFeedback(BuildContext context, SolveState state) {
   switch (state.status) {
     case SolveStatus.loadingSetup:
       return StatusFeedback(
-        label: 'Setting up the position…',
-        color: colors.surfaceContainerHigh,
+        label: '',
+        color: colors.surface,
       );
     case SolveStatus.playing:
       return StatusFeedback(
-        label: 'Find the best move',
-        color: colors.surfaceContainerHigh,
+        label: '',
+        color: colors.surface,
       );
     case SolveStatus.evaluating:
       return StatusFeedback(
@@ -264,7 +389,7 @@ StatusFeedback solveStatusFeedback(BuildContext context, SolveState state) {
       );
     case SolveStatus.almostBest:
       return StatusFeedback(
-        label: 'Good move — but not the puzzle line. Try again.',
+        label: 'Good move, but not the puzzle line. Try again.',
         color: colors.tertiaryContainer,
       );
     case SolveStatus.inaccuracy:
@@ -281,6 +406,11 @@ StatusFeedback solveStatusFeedback(BuildContext context, SolveState state) {
       return StatusFeedback(
         label: 'Solution played out',
         color: colors.surfaceContainerHigh,
+      );
+    case SolveStatus.exploring:
+      return StatusFeedback(
+        label: 'Wrong. Keep playing to see what happens.',
+        color: colors.errorContainer,
       );
   }
 }

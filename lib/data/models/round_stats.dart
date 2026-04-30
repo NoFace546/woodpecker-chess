@@ -60,7 +60,9 @@ class RoundStats {
     final sorted = attempts.toList()
       ..sort((a, b) => a.position.compareTo(b.position));
 
-    final correct = sorted.where((a) => a.isCorrect).length;
+    // Hint-assisted solves don't count as correct - pattern wasn't recognised.
+    final correct =
+        sorted.where((a) => a.isCorrect && a.hintsUsed == 0).length;
     final hintsUsed = sorted.fold<int>(0, (s, a) => s + a.hintsUsed);
     final totalMs = sorted.fold<int>(0, (s, a) => s + a.time.inMilliseconds);
     final times = sorted.map((a) => a.time.inMilliseconds).toList()..sort();
@@ -72,7 +74,8 @@ class RoundStats {
     int currentStreak = 0;
     int longestStreak = 0;
     for (final a in sorted) {
-      if (a.isCorrect && a.time <= flowThreshold) {
+      // Hint-assisted solves break the flow streak.
+      if (a.isCorrect && a.hintsUsed == 0 && a.time <= flowThreshold) {
         currentStreak++;
         if (currentStreak > longestStreak) longestStreak = currentStreak;
       } else {

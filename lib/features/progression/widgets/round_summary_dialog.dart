@@ -10,6 +10,8 @@ import '../../../data/models/round_comparison.dart';
 import '../../../data/models/round_stats.dart';
 import '../../../data/models/tactical_themes.dart';
 import '../../../data/repositories/round_repository.dart';
+import '../../../widgets/error_view.dart';
+import '../../../services/app_preferences.dart';
 
 class RoundSummaryDialog extends ConsumerStatefulWidget {
   const RoundSummaryDialog({
@@ -49,7 +51,8 @@ class _RoundSummaryDialogState extends ConsumerState<RoundSummaryDialog> {
     super.dispose();
   }
 
-  void _maybeFireConfetti(double accuracy) {
+  void _maybeFireConfetti(double accuracy, bool enabled) {
+    if (!enabled) return;
     if (_confettiTriggered) return;
     if (accuracy >= 0.85) {
       _confettiTriggered = true;
@@ -135,10 +138,15 @@ class _RoundSummaryDialogState extends ConsumerState<RoundSummaryDialog> {
                   height: 120,
                   child: Center(child: CircularProgressIndicator()),
                 ),
-                error: (e, _) => Text('Error: $e'),
+                error: (e, _) => const ErrorView(compact: true),
                 data: (comparison) {
+                  final confettiEnabled =
+                      ref.read(confettiEnabledProvider);
                   WidgetsBinding.instance.addPostFrameCallback((_) {
-                    _maybeFireConfetti(comparison.current.accuracy);
+                    _maybeFireConfetti(
+                      comparison.current.accuracy,
+                      confettiEnabled,
+                    );
                   });
                   final allRounds =
                       allRoundsAsync.maybeWhen(data: (r) => r, orElse: () => const <RoundStats>[]);
@@ -267,7 +275,7 @@ class _Body extends StatelessWidget {
                 Expanded(
                   child: Text(
                     '90%+ accuracy and ${mastery.speedupPct}% faster than '
-                    'round 1. This set looks mastered — archive it and '
+                    'round 1. This set looks mastered. Archive it and '
                     'build the next recommended?',
                   ),
                 ),
@@ -311,7 +319,7 @@ class _Body extends StatelessWidget {
                         child: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 4),
                           child: Text(
-                            '#${o.attempt.puzzleId} — '
+                            '#${o.attempt.puzzleId}: '
                             '${_fmt(o.attempt.time)}$suffix',
                             style: Theme.of(ctx)
                                 .textTheme

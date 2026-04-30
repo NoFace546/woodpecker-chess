@@ -3,18 +3,46 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../data/models/set_filter.dart';
+import '../../data/models/theme_definitions.dart';
 import '../../data/repositories/set_repository.dart';
+import '../../data/repositories/user_state_repository.dart';
+import '../../services/pro_status.dart';
 import '../../services/training_recommender.dart';
+import '../../widgets/pro_lock.dart';
+import '../paywall/paywall_screen.dart';
+import '../strengths/widgets/theme_explainer_sheet.dart';
 
-const _commonThemes = [
-  'mate', 'mateIn1', 'mateIn2', 'mateIn3',
-  'fork', 'pin', 'skewer', 'discoveredAttack',
-  'sacrifice', 'attraction', 'deflection',
+// Recommended training is now the broad calibration tool itself, so it is
+// available from a fresh account. Kept as a constant in case the threshold
+// returns later.
+const _recommendedUnlockAttempts = 0;
+
+// Free tier - the most common motifs a club player would pick.
+const _freeThemes = [
+  'mate', 'mateIn1', 'mateIn2',
+  'fork', 'pin', 'skewer',
   'opening', 'middlegame', 'endgame',
   'short', 'long',
 ];
 
+// Shown above the "View all" expander. Free + a few popular Pro motifs.
+const _commonThemes = [
+  ..._freeThemes,
+  'mateIn3',
+  'discoveredAttack', 'sacrifice', 'attraction', 'deflection',
+];
+
 const _sizeOptions = [50, 100, 250, 500, 1000];
+
+// Themes from kThemeDefinitions that aren't already in the common list.
+final List<String> _allOtherThemes = () {
+  final common = _commonThemes.toSet();
+  final extras = kThemeDefinitions.keys
+      .where((t) => !common.contains(t))
+      .toList()
+    ..sort();
+  return extras;
+}();
 
 class SetBuilderScreen extends ConsumerStatefulWidget {
   const SetBuilderScreen({super.key});
@@ -30,6 +58,13 @@ class _SetBuilderScreenState extends ConsumerState<SetBuilderScreen> {
   int? _previewCount;
   bool _previewLoading = false;
   bool _creating = false;
+  final TextEditingController _nameController = TextEditingController();
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
 
   SetFilter get _currentFilter => SetFilter(
         ratingMin: _ratingRange.start.round(),
@@ -37,6 +72,81 @@ class _SetBuilderScreenState extends ConsumerState<SetBuilderScreen> {
         themes: _selectedThemes.toList(),
         size: _size,
       );
+
+  Widget _themeChip(String theme) {
+    final isProTheme = !_freeThemes.contains(theme);
+    final isPro = ref.watch(isProProvider);
+    final locked = isProTheme && !isPro;
+    final selected = _selectedThemes.contains(theme);
+    final scheme = Theme.of(context).colorScheme;
+    final bg = selected
+        ? scheme.primaryContainer
+        : scheme.surfaceContainerHighest;
+    final fg = selected ? scheme.onPrimaryContainer : scheme.onSurface;
+
+    void toggle() {
+      if (locked) {
+        PaywallScreen.show(
+          context,
+          headline: 'Unlock all tactical themes',
+          subhead:
+              'Free includes the core motifs. Pro unlocks 40+ named '
+              'mating patterns, advanced motifs and phase-specific '
+              'endgame themes.',
+        );
+        return;
+      }
+      setState(() {
+        if (selected) {
+          _selectedThemes.remove(theme);
+        } else {
+          _selectedThemes.add(theme);
+        }
+      });
+      _refreshPreview();
+    }
+
+    return Material(
+      color: bg,
+      shape: StadiumBorder(
+        side: BorderSide(
+          color: selected
+              ? scheme.primary.withValues(alpha: 0.6)
+              : scheme.outlineVariant,
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: toggle,
+        onLongPress: () => ThemeExplainerSheet.show(context, theme),
+        customBorder: const StadiumBorder(),
+        child: Padding(
+          padding:
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (locked) ...[
+                Icon(Icons.lock_outline, size: 14, color: fg),
+                const SizedBox(width: 4),
+              ],
+              if (selected && !locked) ...[
+                Icon(Icons.check, size: 14, color: fg),
+                const SizedBox(width: 4),
+              ],
+              Text(
+                theme,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: fg,
+                      fontWeight: selected ? FontWeight.w600 : null,
+                    ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   Future<void> _refreshPreview() async {
     setState(() {
@@ -60,38 +170,81 @@ class _SetBuilderScreenState extends ConsumerState<SetBuilderScreen> {
     showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('How recommended training works'),
+        title: const Text('How Recommended training is built'),
         content: const SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
+              Text('Data-driven, not generic',
+                  style: TextStyle(fontWeight: FontWeight.w600)),
+              SizedBox(height: 4),
               Text(
-                'Builds one ~150-puzzle set tailored to you, designed to '
-                'be drilled Woodpecker-style across 5–7 rounds.',
+                'Recommended training is built from your own attempt '
+                'history. The recommender reads every puzzle you have '
+                'solved and uses statistics to find where you actually '
+                'struggle.',
               ),
               SizedBox(height: 12),
-              Text('Rating range',
+              Text('Weakness detection',
                   style: TextStyle(fontWeight: FontWeight.w600)),
+              SizedBox(height: 4),
               Text(
-                'Your Elo - 200 to your Elo + 100 (comfort zone). Hard '
-                'enough to learn from, easy enough to keep momentum.',
+                'Each tactical theme gets a weakness score from:\n'
+                '• Wilson lower-bound on your correct-ratio (the same '
+                'statistic Lichess uses - suppresses noise from small '
+                'samples)\n'
+                '• A 50/50 blend of lifetime and recent attempts, so '
+                'recent play is weighted up\n'
+                '• 70 % accuracy gap + 30 % speed penalty vs your baseline\n\n'
+                'Themes with too few attempts are flagged low-confidence '
+                'and held out of the drill pool.',
               ),
               SizedBox(height: 12),
-              Text('Theme mix',
+              Text('Adaptive drill / explore split',
                   style: TextStyle(fontWeight: FontWeight.w600)),
+              SizedBox(height: 4),
               Text(
-                '70% targets your weakest themes (high-confidence weaknesses '
-                "from your stats). 30% explores themes we don't have enough "
-                'data on yet, so future recommendations stay accurate.',
+                'The mix between drilling confirmed weaknesses and probing '
+                'untested themes shifts with how much data the recommender '
+                'has on you:\n\n'
+                '• Calibration - fresh account, mostly exploration so the '
+                'recommender learns your shape\n'
+                '• Discovery - balanced drill and explore once a few '
+                'weaknesses surface\n'
+                '• Refinement - heavy drill on confirmed weaknesses, '
+                'light exploration on the side\n'
+                '• Mastery - almost pure drill on the few weaknesses left '
+                'after deep history\n\n'
+                'You move into the next mode automatically as your '
+                'attempt history grows.',
               ),
               SizedBox(height: 12),
-              Text('When to switch',
+              Text('Difficulty band',
                   style: TextStyle(fontWeight: FontWeight.w600)),
+              SizedBox(height: 4),
               Text(
-                'When you hit 90%+ accuracy AND 35%+ faster than round 1, '
-                'archive the set and build the next one. Updated stats will '
-                'reshape the next set around your current weaknesses.',
+                'Puzzles are picked from a band around your current Elo, '
+                'biased toward the harder side. Marginal learning comes '
+                'from slightly above your level, not below.',
+              ),
+              SizedBox(height: 12),
+              Text('Size',
+                  style: TextStyle(fontWeight: FontWeight.w600)),
+              SizedBox(height: 4),
+              Text(
+                '150 puzzles - calibrated to be drilled 5-7 times over a '
+                "few weeks (Smith and Tikkanen's Woodpecker cadence).",
+              ),
+              SizedBox(height: 12),
+              Text('Custom set vs Recommended',
+                  style: TextStyle(fontWeight: FontWeight.w600)),
+              SizedBox(height: 4),
+              Text(
+                'Custom: you pick rating and theme manually.\n'
+                'Recommended: the app reads your data, computes per-theme '
+                'scores, and builds a set you could not replicate by hand '
+                'without doing the math yourself.',
               ),
             ],
           ),
@@ -108,6 +261,25 @@ class _SetBuilderScreenState extends ConsumerState<SetBuilderScreen> {
 
   Future<void> _buildRecommended() async {
     if (_creating) return;
+    // Gate: free tier gets 1 recommended set ever. Detect by checking for any
+    // existing set named "Recommended · …" across active + archived.
+    if (!ref.read(isProProvider)) {
+      final active = await ref.read(setRepositoryProvider).listAll();
+      final archived = await ref.read(setRepositoryProvider).listArchived();
+      final hasRecommended = [...active, ...archived]
+          .any((s) => s.name.startsWith('Recommended ·'));
+      if (hasRecommended) {
+        if (!mounted) return;
+        await PaywallScreen.show(
+          context,
+          headline: 'Unlock unlimited Recommended training',
+          subhead:
+              'Your first recommended set is free. Pro lets you regenerate '
+              'a fresh, weakness-targeted set whenever your stats evolve.',
+        );
+        return;
+      }
+    }
     setState(() => _creating = true);
     final messenger = ScaffoldMessenger.of(context);
     messenger.showSnackBar(
@@ -123,25 +295,53 @@ class _SetBuilderScreenState extends ConsumerState<SetBuilderScreen> {
     } catch (e) {
       if (!mounted) return;
       messenger.hideCurrentSnackBar();
-      messenger.showSnackBar(SnackBar(content: Text('Failed: $e')));
+      debugPrint('Recommended set build failed: $e');
+      messenger.showSnackBar(const SnackBar(
+        content: Text('Could not build recommended set. Try again.'),
+        behavior: SnackBarBehavior.floating,
+      ));
       setState(() => _creating = false);
     }
   }
 
   Future<void> _createSet() async {
     if (_creating) return;
+    // Gate: free tier allows 1 active custom set. Recommended sets don't
+    // count against the cap so the user can experience both flows once.
+    if (!ref.read(isProProvider)) {
+      final active = await ref.read(setRepositoryProvider).listAll();
+      final customCount =
+          active.where((s) => !s.name.startsWith('Recommended ·')).length;
+      if (customCount >= 1) {
+        if (!mounted) return;
+        await PaywallScreen.show(
+          context,
+          headline: 'Unlock unlimited custom sets',
+          subhead:
+              'Free includes 1 active custom set. Pro removes the limit and '
+              'unlocks every tactical theme.',
+        );
+        return;
+      }
+    }
     setState(() => _creating = true);
     try {
       final repo = ref.read(setRepositoryProvider);
-      final set = await repo.create(_currentFilter);
+      final customName = _nameController.text.trim();
+      final set = await repo.create(
+        _currentFilter,
+        name: customName.isEmpty ? null : customName,
+      );
       ref.invalidate(allSetsProvider);
       if (!mounted) return;
       context.go('/sets/${set.id}');
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not create set: $e')),
-      );
+      debugPrint('Set create failed: $e');
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Could not create set. Try again.'),
+        behavior: SnackBarBehavior.floating,
+      ));
       setState(() => _creating = false);
     }
   }
@@ -153,35 +353,51 @@ class _SetBuilderScreenState extends ConsumerState<SetBuilderScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Card(
-            color: Theme.of(context).colorScheme.secondaryContainer,
-            child: ListTile(
-              leading: const Icon(Icons.fitness_center),
-              title: Row(
-                children: [
-                  const Expanded(child: Text('Recommended training')),
-                  InkWell(
-                    onTap: _showRecommendedExplainer,
-                    borderRadius: BorderRadius.circular(16),
-                    child: const Padding(
-                      padding: EdgeInsets.all(4),
-                      child: Icon(Icons.info_outline, size: 18),
+          Builder(builder: (_) {
+            final user = ref.watch(userStateProvider).value;
+            final attempts = user?.attemptsTotal ?? 0;
+            final unlocked = attempts >= _recommendedUnlockAttempts;
+            return Card(
+              color: unlocked
+                  ? Theme.of(context).colorScheme.secondaryContainer
+                  : Theme.of(context).colorScheme.surfaceContainerHigh,
+              child: ListTile(
+                leading: Icon(
+                  unlocked ? Icons.fitness_center : Icons.lock_outline,
+                ),
+                title: Row(
+                  children: [
+                    const Expanded(child: Text('Recommended training')),
+                    InkWell(
+                      onTap: _showRecommendedExplainer,
+                      borderRadius: BorderRadius.circular(16),
+                      child: const Padding(
+                        padding: EdgeInsets.all(4),
+                        child: Icon(Icons.info_outline, size: 18),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
+                subtitle: Text(
+                  unlocked
+                      ? 'Targets your current weaknesses, sized for Woodpecker'
+                      : 'Unlocks after $_recommendedUnlockAttempts attempts '
+                          '($attempts/$_recommendedUnlockAttempts). Solve '
+                          'random puzzles to calibrate first.',
+                ),
+                trailing: _creating
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(unlocked
+                        ? Icons.chevron_right
+                        : Icons.lock_outline),
+                onTap: !unlocked || _creating ? null : _buildRecommended,
               ),
-              subtitle: const Text(
-                  'Targets your current weaknesses, sized for Woodpecker'),
-              trailing: _creating
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.chevron_right),
-              onTap: _creating ? null : _buildRecommended,
-            ),
-          ),
+            );
+          }),
           const SizedBox(height: 16),
           Text(
             'Or build a custom set',
@@ -190,7 +406,7 @@ class _SetBuilderScreenState extends ConsumerState<SetBuilderScreen> {
           const SizedBox(height: 12),
           Text('Rating', style: Theme.of(context).textTheme.titleMedium),
           Text(
-            '${_ratingRange.start.round()} – ${_ratingRange.end.round()}',
+            '${_ratingRange.start.round()} - ${_ratingRange.end.round()}',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           RangeSlider(
@@ -205,29 +421,36 @@ class _SetBuilderScreenState extends ConsumerState<SetBuilderScreen> {
             onChanged: (v) => setState(() => _ratingRange = v),
             onChangeEnd: (_) => _refreshPreview(),
           ),
+          _RatingRangeWarning(range: _ratingRange),
           const SizedBox(height: 16),
           Text('Themes (optional, any match)',
               style: Theme.of(context).textTheme.titleMedium),
+          Text(
+            'Long-press a theme to see its explanation.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+          ),
           const SizedBox(height: 8),
           Wrap(
             spacing: 8,
             runSpacing: 4,
             children: [
-              for (final theme in _commonThemes)
-                FilterChip(
-                  label: Text(theme),
-                  selected: _selectedThemes.contains(theme),
-                  onSelected: (sel) {
-                    setState(() {
-                      if (sel) {
-                        _selectedThemes.add(theme);
-                      } else {
-                        _selectedThemes.remove(theme);
-                      }
-                    });
-                    _refreshPreview();
-                  },
-                ),
+              for (final theme in _commonThemes) _themeChip(theme),
+            ],
+          ),
+          ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            childrenPadding: const EdgeInsets.only(top: 4),
+            title: const Text('View all themes'),
+            children: [
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  for (final theme in _allOtherThemes) _themeChip(theme),
+                ],
+              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -251,7 +474,7 @@ class _SetBuilderScreenState extends ConsumerState<SetBuilderScreen> {
             Text(
               _previewCount! >= _size
                   ? 'About $_previewCount puzzles match. Set will contain $_size of them.'
-                  : 'Only $_previewCount puzzles match — set will contain all of them.',
+                  : 'Only $_previewCount puzzles match, set will contain all of them.',
               style: Theme.of(context).textTheme.bodyMedium,
             )
           else
@@ -260,6 +483,16 @@ class _SetBuilderScreenState extends ConsumerState<SetBuilderScreen> {
               icon: const Icon(Icons.refresh),
               label: const Text('Preview match count'),
             ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _nameController,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: const InputDecoration(
+              labelText: 'Set name (optional)',
+              hintText: 'Leave blank for auto-generated name',
+              border: OutlineInputBorder(),
+            ),
+          ),
           const SizedBox(height: 24),
           FilledButton.icon(
             onPressed: _creating || _previewCount == 0 ? null : _createSet,
@@ -273,6 +506,66 @@ class _SetBuilderScreenState extends ConsumerState<SetBuilderScreen> {
             label: const Text('Create set'),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _RatingRangeWarning extends ConsumerWidget {
+  const _RatingRangeWarning({required this.range});
+  final RangeValues range;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final user = ref.watch(userStateProvider).value;
+    if (user == null) return const SizedBox.shrink();
+    final elo = user.elo;
+    final lo = range.start.round();
+    final hi = range.end.round();
+    String? msg;
+    bool isHard = false;
+    if (lo > elo + 300) {
+      msg = 'This range is well above your Elo ($elo). '
+          'You may struggle to solve enough puzzles to improve.';
+      isHard = true;
+    } else if (hi < elo - 300) {
+      msg = 'This range is well below your Elo ($elo). '
+          'Puzzles may feel too easy to push your training.';
+    }
+    if (msg == null) return const SizedBox.shrink();
+    final scheme = Theme.of(context).colorScheme;
+    final bg = isHard
+        ? scheme.errorContainer.withValues(alpha: 0.6)
+        : scheme.surfaceContainerHigh;
+    final fg = isHard ? scheme.onErrorContainer : scheme.onSurfaceVariant;
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              isHard ? Icons.warning_amber_rounded : Icons.info_outline,
+              size: 18,
+              color: fg,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                msg,
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: fg),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

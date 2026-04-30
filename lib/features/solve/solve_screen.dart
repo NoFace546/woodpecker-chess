@@ -3,16 +3,38 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/repositories/puzzle_repository.dart';
 import '../../data/repositories/round_repository.dart';
+import '../../data/repositories/stats_repository.dart';
 import '../../data/repositories/user_state_repository.dart';
+import '../../services/app_preferences.dart';
 import 'solve_board_controller.dart';
 import 'solve_board_widget.dart';
 import 'solve_state.dart';
 
-class SolveScreen extends ConsumerWidget {
+const _autoAdvanceDelay = Duration(milliseconds: 1200);
+const _eloLogMax = 12;
+
+class SolveScreen extends ConsumerStatefulWidget {
   const SolveScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SolveScreen> createState() => _SolveScreenState();
+}
+
+class _SolveScreenState extends ConsumerState<SolveScreen> {
+  final List<EloDelta> _eloLog = [];
+
+  @override
+  void initState() {
+    super.initState();
+    // Always start /random with a fresh puzzle. Without this the provider
+    // would replay the previously-shown puzzle when the user reopens.
+    Future.microtask(() {
+      if (mounted) ref.invalidate(eloRandomPuzzleProvider);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final puzzleAsync = ref.watch(eloRandomPuzzleProvider);
     final userAsync = ref.watch(userStateProvider);
     return Scaffold(
@@ -43,8 +65,16 @@ class SolveScreen extends ConsumerWidget {
       ),
       body: SafeArea(
         child: puzzleAsync.when(
-          loading: () =>
-              const Center(child: CircularProgressIndicator()),
+          loading: () => const Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 12),
+                Text('Loading puzzle…'),
+              ],
+            ),
+          ),
           error: (error, _) => _ErrorView(
             error: error,
             onRetry: () => ref.invalidate(eloRandomPuzzleProvider),
@@ -64,6 +94,15 @@ class SolveScreen extends ConsumerWidget {
                     hintsUsed: result.hintsUsed,
                     userMoveUci: result.userMoveUci,
                   );
+              // Refresh stats providers so Strengths / Elo / phase radar
+              // pick up this attempt without an app restart.
+              ref.invalidate(globalStatsProvider);
+              ref.invalidate(globalThemeStatsProvider);
+              ref.invalidate(enrichedThemeStatsProvider);
+              ref.invalidate(weaknessAnalysisProvider);
+              ref.invalidate(phaseStatsProvider);
+              ref.invalidate(eloHistoryProvider);
+              ref.invalidate(globalMedianTimeProvider);
               // Random free-play is the only flow that updates Elo (sets are
               // pre-filtered by rating, so they aren't a fair test).
               final delta =
@@ -74,12 +113,27 @@ class SolveScreen extends ConsumerWidget {
                         hintsUsed: result.hintsUsed,
                       );
               if (!context.mounted) return;
-              _showEloDelta(context, delta);
+              setState(() {
+                _eloLog.add(delta);
+                if (_eloLog.length > _eloLogMax) {
+                  _eloLog.removeRange(0, _eloLog.length - _eloLogMax);
+                }
+              });
+              // Auto-advance only on a clean solve - hints break the flow.
+              if (result.isCorrect &&
+                  result.hintsUsed == 0 &&
+                  ref.read(autoAdvanceProvider)) {
+                Future.delayed(_autoAdvanceDelay, () {
+                  if (!context.mounted) return;
+                  ref.invalidate(eloRandomPuzzleProvider);
+                });
+              }
             },
             statusBarBuilder: (context, state, controller) =>
                 _RandomStatusBar(
               state: state,
               controller: controller,
+              eloLog: _eloLog,
               onTryAgain: controller.resetForRetry,
               onNext: () => ref.invalidate(eloRandomPuzzleProvider),
             ),
@@ -116,63 +170,97 @@ class _ErrorView extends StatelessWidget {
   }
 }
 
-void _showEloDelta(BuildContext context, EloDelta delta) {
-  final scheme = Theme.of(context).colorScheme;
-  final Color bg;
-  final Color fg;
-  final String text;
-  if (delta.wasHinted) {
-    // Hint-assisted correct: yellow, no Elo change.
-    bg = const Color(0xFFFFF3CD);
-    fg = const Color(0xFF7A5C00);
-    text = '0 Elo (hint used)';
-  } else if (delta.delta > 0) {
-    bg = scheme.tertiaryContainer;
-    fg = scheme.onTertiaryContainer;
-    text = '+${delta.delta} Elo · now ${delta.after}';
-  } else if (delta.delta < 0) {
-    bg = scheme.errorContainer;
-    fg = scheme.onErrorContainer;
-    text = '${delta.delta} Elo · now ${delta.after}';
-  } else {
-    bg = scheme.surfaceContainerHigh;
-    fg = scheme.onSurface;
-    text = 'No Elo change';
-  }
-  ScaffoldMessenger.of(context)
-    ..hideCurrentSnackBar()
-    ..showSnackBar(
-      SnackBar(
-        content: Text(text, style: TextStyle(color: fg)),
-        backgroundColor: bg,
-        duration: const Duration(milliseconds: 1800),
-        behavior: SnackBarBehavior.floating,
+class _EloLogStrip extends StatelessWidget {
+  const _EloLogStrip({required this.deltas});
+  final List<EloDelta> deltas;
+
+  @override
+  Widget build(BuildContext context) {
+    if (deltas.isEmpty) return const SizedBox.shrink();
+    final scheme = Theme.of(context).colorScheme;
+    return SizedBox(
+      height: 28,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        reverse: true,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        itemCount: deltas.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 6),
+        itemBuilder: (context, i) {
+          // Newest on the right; reverse:true makes index 0 = newest.
+          final d = deltas[deltas.length - 1 - i];
+          final Color bg;
+          final Color fg;
+          final String text;
+          if (d.wasHinted || d.delta == 0) {
+            bg = scheme.surfaceContainerHigh;
+            fg = scheme.onSurfaceVariant;
+            text = d.wasHinted ? '0' : '0';
+          } else if (d.delta > 0) {
+            bg = scheme.tertiaryContainer;
+            fg = scheme.onTertiaryContainer;
+            text = '+${d.delta}';
+          } else {
+            bg = scheme.errorContainer;
+            fg = scheme.onErrorContainer;
+            text = '${d.delta}';
+          }
+          return Container(
+            alignment: Alignment.center,
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            decoration: BoxDecoration(
+              color: bg,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              text,
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: fg,
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+          );
+        },
       ),
     );
+  }
 }
 
-class _RandomStatusBar extends StatelessWidget {
+class _RandomStatusBar extends ConsumerWidget {
   const _RandomStatusBar({
     required this.state,
     required this.controller,
+    required this.eloLog,
     required this.onTryAgain,
     required this.onNext,
   });
 
   final SolveState state;
   final SolveBoardController controller;
+  final List<EloDelta> eloLog;
   final VoidCallback onTryAgain;
   final VoidCallback onNext;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final feedback = solveStatusFeedback(context, state);
+    final hintsEnabled = ref.watch(hintsEnabledProvider);
     final canAdvance = state.status == SolveStatus.solved ||
         state.status == SolveStatus.wrong ||
         state.status == SolveStatus.inaccuracy ||
         state.status == SolveStatus.almostBest ||
-        state.status == SolveStatus.revealed;
-    return Container(
+        state.status == SolveStatus.revealed ||
+        state.status == SolveStatus.exploring;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (eloLog.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          _EloLogStrip(deltas: eloLog),
+          const SizedBox(height: 4),
+        ],
+        Container(
       width: double.infinity,
       color: feedback.color,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -196,27 +284,27 @@ class _RandomStatusBar extends StatelessWidget {
                 ),
             ],
           ),
-          if (state.status == SolveStatus.playing ||
-              canShowSolution(state.status) ||
-              canAdvance)
-            const SizedBox(height: 8),
-          Wrap(
+          const SizedBox(height: 8),
+          ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 40),
+            child: Wrap(
             spacing: 8,
             runSpacing: 4,
             alignment: WrapAlignment.end,
             children: [
-              if (state.status == SolveStatus.playing &&
+              if (hintsEnabled &&
+                  state.status == SolveStatus.playing &&
                   state.hintFromSquare == null)
-                TextButton.icon(
+                IconButton(
                   onPressed: controller.requestHint,
                   icon: const Icon(Icons.lightbulb_outline),
-                  label: const Text('Hint'),
+                  tooltip: 'Hint',
                 ),
               if (canShowSolution(state.status))
-                TextButton.icon(
+                IconButton(
                   onPressed: controller.revealSolution,
                   icon: const Icon(Icons.visibility_outlined),
-                  label: const Text('Show solution'),
+                  tooltip: 'Show solution',
                 ),
               if (canAdvance) ...[
                 OutlinedButton.icon(
@@ -232,8 +320,11 @@ class _RandomStatusBar extends StatelessWidget {
               ],
             ],
           ),
+          ),
         ],
       ),
+        ),
+      ],
     );
   }
 }

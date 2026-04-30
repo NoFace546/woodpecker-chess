@@ -11,6 +11,7 @@ enum SolveStatus {
   wrong,
   solved,
   revealed,
+  exploring,
 }
 
 class SolveState {

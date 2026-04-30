@@ -8,6 +8,7 @@ import '../../data/repositories/puzzle_repository.dart';
 import '../../data/repositories/round_repository.dart';
 import '../../data/repositories/set_repository.dart';
 import '../../data/repositories/stats_repository.dart';
+import '../../services/app_preferences.dart';
 import '../progression/widgets/round_summary_dialog.dart';
 import '../solve/puzzle.dart';
 import '../solve/solve_board_controller.dart';
@@ -82,7 +83,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen> {
       }
       final outcomes = <AttemptOutcome>[];
       for (final a in priorAttempts) {
-        if (!a.isCorrect) {
+        if (!a.isCorrect || a.hintsUsed > 0) {
           outcomes.add(AttemptOutcome.wrong);
         } else {
           final prev = bestTimes[a.puzzleId];
@@ -132,6 +133,14 @@ class _SessionScreenState extends ConsumerState<SessionScreen> {
     final newPosition = _position + 1;
     await roundRepo.advancePosition(_round!.id, newPosition);
     ref.invalidate(roundsForSetProvider(_set!.id));
+    // Refresh global stats so Strengths / phase radar / Elo history pick
+    // up the attempt without an app restart.
+    ref.invalidate(globalStatsProvider);
+    ref.invalidate(globalThemeStatsProvider);
+    ref.invalidate(enrichedThemeStatsProvider);
+    ref.invalidate(weaknessAnalysisProvider);
+    ref.invalidate(phaseStatsProvider);
+    ref.invalidate(globalMedianTimeProvider);
 
     final outcome = _classifyOutcome(result);
     if (!mounted) return;
@@ -141,10 +150,20 @@ class _SessionScreenState extends ConsumerState<SessionScreen> {
       }
       _outcomes[_position] = outcome;
     });
+
+    // Auto-advance only on a clean solve - hints break the flow.
+    if (result.isCorrect &&
+        result.hintsUsed == 0 &&
+        ref.read(autoAdvanceProvider)) {
+      Future.delayed(const Duration(milliseconds: 1200), () {
+        if (!mounted) return;
+        _advance();
+      });
+    }
   }
 
   AttemptOutcome _classifyOutcome(SolveResult result) {
-    if (!result.isCorrect) return AttemptOutcome.wrong;
+    if (!result.isCorrect || result.hintsUsed > 0) return AttemptOutcome.wrong;
     final prev = _previousBestMs[result.puzzleId];
     if (prev != null && result.time.inMilliseconds < prev) {
       return AttemptOutcome.record;
@@ -156,7 +175,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen> {
     if (_set == null || _round == null) return;
     final roundRepo = ref.read(roundRepositoryProvider);
     final puzzleRepo = ref.read(puzzleRepositoryProvider);
-    // currentPosition was already advanced in _onResult — just navigate.
+    // currentPosition was already advanced in _onResult - just navigate.
     final newPosition = _position + 1;
 
     if (newPosition >= _orderedIds.length) {
@@ -380,7 +399,7 @@ class _AttemptDot extends StatelessWidget {
   }
 }
 
-class _SessionStatusBar extends StatelessWidget {
+class _SessionStatusBar extends ConsumerWidget {
   const _SessionStatusBar({
     required this.state,
     required this.controller,
@@ -396,18 +415,21 @@ class _SessionStatusBar extends StatelessWidget {
   final VoidCallback onContinue;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final feedback = solveStatusFeedback(context, state);
+    final hintsEnabled = ref.watch(hintsEnabledProvider);
     final canContinue = state.status == SolveStatus.solved ||
         state.status == SolveStatus.wrong ||
         state.status == SolveStatus.inaccuracy ||
         state.status == SolveStatus.almostBest ||
-        state.status == SolveStatus.revealed;
+        state.status == SolveStatus.revealed ||
+        state.status == SolveStatus.exploring;
     final isLast = position + 1 >= total;
     final canRetry = state.status == SolveStatus.wrong ||
         state.status == SolveStatus.inaccuracy ||
         state.status == SolveStatus.almostBest ||
-        state.status == SolveStatus.revealed;
+        state.status == SolveStatus.revealed ||
+        state.status == SolveStatus.exploring;
     return Container(
       width: double.infinity,
       color: feedback.color,
@@ -433,23 +455,26 @@ class _SessionStatusBar extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          Wrap(
+          ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 40),
+            child: Wrap(
             spacing: 8,
             runSpacing: 4,
             alignment: WrapAlignment.end,
             children: [
-              if (state.status == SolveStatus.playing &&
+              if (hintsEnabled &&
+                  state.status == SolveStatus.playing &&
                   state.hintFromSquare == null)
-                TextButton.icon(
+                IconButton(
                   onPressed: controller.requestHint,
                   icon: const Icon(Icons.lightbulb_outline),
-                  label: const Text('Hint'),
+                  tooltip: 'Hint',
                 ),
               if (canShowSolution(state.status))
-                TextButton.icon(
+                IconButton(
                   onPressed: controller.revealSolution,
                   icon: const Icon(Icons.visibility_outlined),
-                  label: const Text('Show solution'),
+                  tooltip: 'Show solution',
                 ),
               if (canRetry)
                 OutlinedButton.icon(
@@ -464,6 +489,7 @@ class _SessionStatusBar extends StatelessWidget {
                   label: Text(isLast ? 'Finish round' : 'Next'),
                 ),
             ],
+          ),
           ),
         ],
       ),

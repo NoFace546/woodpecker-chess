@@ -4,6 +4,8 @@ import 'package:dartchess/dartchess.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../data/repositories/bot_game_repository.dart';
+import '../../services/haptic.dart';
+import '../../services/sound_service.dart';
 import '../../services/stockfish_service.dart';
 import 'bot_config.dart';
 
@@ -22,6 +24,9 @@ class BotGameState {
     this.promotionMove,
     this.outcome,
     this.outcomeReason,
+    this.hintMove,
+    this.hintsUsed = 0,
+    this.takebacksUsed = 0,
   });
 
   final Position position;
@@ -31,27 +36,45 @@ class BotGameState {
   final NormalMove? promotionMove;
   final BotGameOutcome? outcome;
   final String? outcomeReason;
+  // Best move suggestion arrow currently displayed for the user.
+  final NormalMove? hintMove;
+  final int hintsUsed;
+  final int takebacksUsed;
 
   BotGameState copyWith({
     Position? position,
     BotGameStatus? status,
     Move? lastMove,
+    bool clearLastMove = false,
     NormalMove? promotionMove,
     bool clearPromotion = false,
     BotGameOutcome? outcome,
     String? outcomeReason,
+    NormalMove? hintMove,
+    bool clearHint = false,
+    int? hintsUsed,
+    int? takebacksUsed,
   }) {
     return BotGameState(
       position: position ?? this.position,
       status: status ?? this.status,
       userSide: userSide,
-      lastMove: lastMove ?? this.lastMove,
+      lastMove: clearLastMove ? null : (lastMove ?? this.lastMove),
       promotionMove:
           clearPromotion ? null : (promotionMove ?? this.promotionMove),
       outcome: outcome ?? this.outcome,
       outcomeReason: outcomeReason ?? this.outcomeReason,
+      hintMove: clearHint ? null : (hintMove ?? this.hintMove),
+      hintsUsed: hintsUsed ?? this.hintsUsed,
+      takebacksUsed: takebacksUsed ?? this.takebacksUsed,
     );
   }
+}
+
+class _HistoryEntry {
+  _HistoryEntry({required this.position, required this.lastMove});
+  final Position position;
+  final Move? lastMove;
 }
 
 class BotGameController extends ChangeNotifier {
@@ -59,8 +82,11 @@ class BotGameController extends ChangeNotifier {
     required this.config,
     required this.stockfish,
     required this.repo,
+    this.sound,
+    Duration Function()? animDuration,
     BotGameSnapshot? resumeFrom,
-  })  : _state = _initialState(config, resumeFrom),
+  })  : animDuration = animDuration ?? (() => Duration.zero),
+        _state = _initialState(config, resumeFrom),
         _isResume = resumeFrom != null {
     _bootstrap();
   }
@@ -68,10 +94,18 @@ class BotGameController extends ChangeNotifier {
   final BotConfig config;
   final StockfishService stockfish;
   final BotGameRepository repo;
+  final SoundService? sound;
+  final Duration Function() animDuration;
+
+  void _playMoveSnd(SoundEffect snd, {required bool fromUser}) {
+    final delay = fromUser ? Duration.zero : animDuration();
+    sound?.playAfter(snd, delay);
+  }
 
   BotGameState _state;
   bool _disposed = false;
   final bool _isResume;
+  final List<_HistoryEntry> _history = [];
 
   BotGameState get state => _state;
 
@@ -139,7 +173,7 @@ class BotGameController extends ChangeNotifier {
     if (!isUserTurn) {
       await _playBotMove();
     } else if (!_isResume) {
-      // Brand-new game with user as white — nothing to do until first move.
+      // Brand-new game with user as white - nothing to do until first move.
     }
   }
 
@@ -154,18 +188,77 @@ class BotGameController extends ChangeNotifier {
     }
     if (!_state.position.isLegal(move)) return;
 
-    final after = _state.position.playUnchecked(move);
+    final before = _state.position;
+    final after = before.playUnchecked(move);
+    _history.add(_HistoryEntry(position: before, lastMove: _state.lastMove));
+    _playMoveSnd(_moveSound(before, move, after), fromUser: true);
+    AppHaptics.light();
     _set(_state.copyWith(
       position: after,
       lastMove: move,
       status: BotGameStatus.thinking,
       clearPromotion: true,
+      clearHint: true,
     ));
     await _persist();
 
     if (_checkGameOver(after, userJustMoved: true)) return;
 
     await _playBotMove();
+  }
+
+  /// Returns the best move from the engine and shows it as an arrow on the
+  /// board until the user moves. Respects the assist mode's hint limit.
+  Future<void> requestHint() async {
+    if (_state.status != BotGameStatus.awaitingUser) return;
+    if (!config.assistMode.hintsAllowed) return;
+    if (!config.assistMode.hintsUnlimited &&
+        _state.hintsUsed >= config.assistMode.hintLimit) {
+      return;
+    }
+    final fen = _state.position.fen;
+    String? uci;
+    try {
+      uci = await stockfish.bestMove(fen: fen, depth: config.level.depth);
+    } catch (_) {
+      return;
+    }
+    if (_disposed || uci == null) return;
+    final move = Move.parse(uci);
+    if (move is! NormalMove) return;
+    _set(_state.copyWith(
+      hintMove: move,
+      hintsUsed: _state.hintsUsed + 1,
+    ));
+  }
+
+  /// Reverts the last user move (and the bot's reply, if any) so the user can
+  /// try again. Respects the assist mode's takeback limit.
+  void takeback() {
+    if (_state.status == BotGameStatus.finished) return;
+    if (!config.assistMode.takebacksAllowed) return;
+    if (!config.assistMode.takebacksUnlimited &&
+        _state.takebacksUsed >= config.assistMode.takebackLimit) {
+      return;
+    }
+    if (_history.isEmpty) return;
+    // Pop until it's the user's turn (covers undoing a bot reply + user move).
+    _HistoryEntry? target;
+    while (_history.isNotEmpty) {
+      target = _history.removeLast();
+      if (target.position.turn == _state.userSide) break;
+    }
+    if (target == null) return;
+    _set(_state.copyWith(
+      position: target.position,
+      lastMove: target.lastMove,
+      clearLastMove: target.lastMove == null,
+      status: BotGameStatus.awaitingUser,
+      clearPromotion: true,
+      clearHint: true,
+      takebacksUsed: _state.takebacksUsed + 1,
+    ));
+    _persist();
   }
 
   void onPromotionSelected(Role role) {
@@ -186,11 +279,18 @@ class BotGameController extends ChangeNotifier {
     final String? uci;
     try {
       uci = await stockfish.bestMove(fen: fen, depth: config.level.depth);
+    } on StockfishException catch (e) {
+      _set(_state.copyWith(
+        status: BotGameStatus.finished,
+        outcome: BotGameOutcome.draw,
+        outcomeReason: e.message,
+      ));
+      return;
     } catch (_) {
       _set(_state.copyWith(
         status: BotGameStatus.finished,
         outcome: BotGameOutcome.draw,
-        outcomeReason: 'Engine error',
+        outcomeReason: 'Engine error. Start a new game and try again.',
       ));
       return;
     }
@@ -209,7 +309,11 @@ class BotGameController extends ChangeNotifier {
       ));
       return;
     }
-    final after = _state.position.playUnchecked(move);
+    final before = _state.position;
+    final after = before.playUnchecked(move);
+    _history.add(_HistoryEntry(position: before, lastMove: _state.lastMove));
+    _playMoveSnd(_moveSound(before, move, after), fromUser: false);
+    AppHaptics.medium();
     _set(_state.copyWith(
       position: after,
       lastMove: move,
@@ -221,6 +325,7 @@ class BotGameController extends ChangeNotifier {
   }
 
   bool _checkGameOver(Position position, {required bool userJustMoved}) {
+    if (_state.status == BotGameStatus.finished) return true;
     if (!position.isGameOver) return false;
     BotGameOutcome outcome;
     String reason;
@@ -242,6 +347,20 @@ class BotGameController extends ChangeNotifier {
       outcome: outcome,
       outcomeReason: reason,
     ));
+    switch (outcome) {
+      case BotGameOutcome.userWon:
+        Future.delayed(const Duration(milliseconds: 600), () {
+          if (!_disposed) sound?.play(SoundEffect.correct);
+        });
+      case BotGameOutcome.botWon:
+        Future.delayed(const Duration(milliseconds: 600), () {
+          if (!_disposed) sound?.play(SoundEffect.wrong);
+        });
+      case BotGameOutcome.draw:
+      case BotGameOutcome.resigned:
+        break;
+    }
+    AppHaptics.heavy();
     repo.clear();
     return true;
   }
@@ -254,6 +373,8 @@ class BotGameController extends ChangeNotifier {
       outcome: BotGameOutcome.resigned,
       outcomeReason: 'You resigned',
     ));
+    sound?.play(SoundEffect.wrong);
+    AppHaptics.heavy();
   }
 
   @override
@@ -268,4 +389,12 @@ bool _isPromotionPawnMove(Position position, NormalMove move) {
   if (piece == null || piece.role != Role.pawn) return false;
   final toRank = move.to.rank;
   return toRank == Rank.first || toRank == Rank.eighth;
+}
+
+SoundEffect _moveSound(Position before, Move move, Position after) {
+  // Check is signalled visually; no separate dramatic sound.
+  if (move is NormalMove && before.board.pieceAt(move.to) != null) {
+    return SoundEffect.capture;
+  }
+  return SoundEffect.move;
 }

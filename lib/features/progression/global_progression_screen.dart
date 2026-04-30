@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 
 import '../../data/models/global_stats.dart';
 import '../../data/repositories/stats_repository.dart';
+import '../../widgets/empty_state.dart';
+import '../../widgets/error_view.dart';
 import 'widgets/bar_chart.dart';
 import 'widgets/trend_chart.dart';
 
@@ -20,16 +22,14 @@ class GlobalProgressionScreen extends ConsumerWidget {
       appBar: AppBar(title: const Text('Overall progression')),
       body: globalAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('Error: $e')),
+        error: (e, _) => const ErrorView(),
         data: (stats) {
           if (stats.totalAttempts == 0) {
             return const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text(
-                  'No attempts yet. Solve some puzzles to see your progression.',
-                  textAlign: TextAlign.center,
-                ),
+              child: EmptyState(
+                icon: Icons.insights_outlined,
+                title: 'No attempts yet',
+                body: 'Solve some puzzles to see your progression.',
               ),
             );
           }
@@ -48,7 +48,7 @@ class GlobalProgressionScreen extends ConsumerWidget {
                     child: CircularProgressIndicator(),
                   ),
                 ),
-                error: (e, _) => Text('Error: $e'),
+                error: (e, _) => const ErrorView(compact: true),
                 data: (daily) => _DailySection(daily: daily),
               ),
               const SizedBox(height: 24),
@@ -62,7 +62,7 @@ class GlobalProgressionScreen extends ConsumerWidget {
                     child: CircularProgressIndicator(),
                   ),
                 ),
-                error: (e, _) => Text('Error: $e'),
+                error: (e, _) => const ErrorView(compact: true),
                 data: (activities) => _SetsSection(
                   activities:
                       activities.where((a) => a.totalAttempts > 0).toList(),
@@ -113,8 +113,28 @@ class _StatCard extends StatelessWidget {
       width: 110,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(12),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Theme.of(context).colorScheme.surfaceContainerHighest,
+            Theme.of(context).colorScheme.surfaceContainer,
+          ],
+        ),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: Theme.of(context)
+              .colorScheme
+              .outlineVariant
+              .withValues(alpha: 0.5),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.12),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -141,9 +161,11 @@ class _DailySection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (daily.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 8),
-        child: Text('No activity in the last 30 days.'),
+      return const EmptyState(
+        icon: Icons.event_busy_outlined,
+        title: 'No activity yet',
+        body: 'Solve puzzles to fill in your last 30 days.',
+        compact: true,
       );
     }
     return Column(
@@ -179,9 +201,11 @@ class _SetsSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (activities.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 8),
-        child: Text('No sets played yet.'),
+      return const EmptyState(
+        icon: Icons.collections_bookmark_outlined,
+        title: 'No sets played yet',
+        body: 'Build a set and run a round to populate this section.',
+        compact: true,
       );
     }
     return Column(

@@ -7,6 +7,7 @@ import '../../data/models/tactical_themes.dart';
 import '../../data/repositories/puzzle_repository.dart';
 import '../../data/repositories/round_repository.dart';
 import '../../services/stockfish_service.dart';
+import '../../widgets/error_view.dart';
 import '../solve/puzzle.dart';
 import '../solve/solve_board_controller.dart';
 import '../solve/solve_board_widget.dart';
@@ -44,7 +45,7 @@ class _PuzzlePreviewScreenState extends ConsumerState<PuzzlePreviewScreen> {
       body: SafeArea(
         child: puzzleAsync.when(
           loading: () => const Center(child: CircularProgressIndicator()),
-          error: (e, _) => Center(child: Text('Error: $e')),
+          error: (e, _) => const ErrorView(),
           data: (puzzle) {
             if (puzzle == null) {
               return const Center(child: Text('Puzzle not found'));
@@ -139,7 +140,7 @@ class _PuzzlePreviewScreenState extends ConsumerState<PuzzlePreviewScreen> {
 
       String result;
       if (userUci == expectedUci) {
-        result = 'Spot on — your move was the puzzle line ($expectedUci).';
+        result = 'Spot on. Your move was the puzzle line ($expectedUci).';
       } else if (loss < 30) {
         result = 'Almost as good. Your $userUci lost only $loss cp '
             'compared to $expectedUci.';
@@ -148,7 +149,7 @@ class _PuzzlePreviewScreenState extends ConsumerState<PuzzlePreviewScreen> {
             'Inaccuracy. $userUci lost $loss cp vs the line $expectedUci.';
       } else {
         result =
-            'Big miss. $userUci lost $loss cp — the puzzle line was $expectedUci.';
+            'Big miss. $userUci lost $loss cp. The puzzle line was $expectedUci.';
       }
 
       if (!mounted) return;
@@ -182,12 +183,16 @@ class _LastAttemptCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final wasCorrect = attempt.isCorrect;
+    final wasCorrect = attempt.isCorrect && attempt.hintsUsed == 0;
     final bg =
         wasCorrect ? scheme.tertiaryContainer : scheme.errorContainer;
     final fg =
         wasCorrect ? scheme.onTertiaryContainer : scheme.onErrorContainer;
-    final label = wasCorrect ? 'correct' : 'wrong';
+    final label = wasCorrect
+        ? 'correct'
+        : attempt.isCorrect
+            ? 'used hint'
+            : 'wrong';
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),

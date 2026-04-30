@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../../../data/models/phase_stats.dart';
+import '../../../widgets/empty_state.dart';
 
 class PhaseRadar extends StatelessWidget {
   const PhaseRadar({super.key, required this.stats});
@@ -12,13 +13,13 @@ class PhaseRadar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (!stats.hasAnyData) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        child: Text(
-          'No phase data yet — tag puzzles with opening/middlegame/endgame '
-          'will appear here once you solve some.',
-          style: Theme.of(context).textTheme.bodyMedium,
-        ),
+      return const EmptyState(
+        icon: Icons.radar,
+        title: 'No phase data yet',
+        body:
+            'Solve puzzles tagged opening, middlegame, or endgame to '
+            'unlock the radar.',
+        compact: true,
       );
     }
     final scheme = Theme.of(context).colorScheme;

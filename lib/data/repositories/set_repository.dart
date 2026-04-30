@@ -37,6 +37,11 @@ class SetRepository {
     return result;
   }
 
+  Future<void> rename(String setId, String name) async {
+    await (_db.update(_db.puzzleSets)..where((s) => s.id.equals(setId)))
+        .write(PuzzleSetsCompanion(name: Value(name)));
+  }
+
   Future<void> archive(String setId) async {
     await (_db.update(_db.puzzleSets)..where((s) => s.id.equals(setId)))
         .write(PuzzleSetsCompanion(archivedAt: Value(DateTime.now())));
@@ -224,7 +229,7 @@ class SetRepository {
     final themesPart = filter.themes.isEmpty
         ? 'mixed'
         : filter.themes.take(2).join('+');
-    return '${filter.size} • ${filter.ratingMin}–${filter.ratingMax} • $themesPart';
+    return '${filter.size} • ${filter.ratingMin}-${filter.ratingMax} • $themesPart';
   }
 }
 

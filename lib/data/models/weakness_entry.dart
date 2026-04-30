@@ -24,6 +24,7 @@ class WeaknessAnalyzer {
   List<WeaknessEntry> analyze({
     required List<EnrichedThemeStats> themes,
     required int globalMedianMs,
+    double userAccuracy = 0.5,
   }) {
     final out = themes.map((t) {
       final relSpeed = (globalMedianMs == 0 ||
@@ -39,46 +40,76 @@ class WeaknessAnalyzer {
         stats: t,
         relativeSpeed: relSpeed,
         weaknessScore: weakness,
-        insight: _insight(t, relSpeed),
+        insight: _insight(t, relSpeed, userAccuracy),
       );
     }).toList()
       ..sort((a, b) => b.weaknessScore.compareTo(a.weaknessScore));
     return out;
   }
 
-  String _insight(EnrichedThemeStats t, double relSpeed) {
+  String _insight(
+      EnrichedThemeStats t, double relSpeed, double userAccuracy) {
     if (t.confidence == ConfidenceLevel.low) {
-      return 'Only ${t.totalAttempts} attempt${t.totalAttempts == 1 ? '' : 's'} '
-          'on ${t.theme} — keep playing for a reliable read.';
+      final needed = 5 - t.totalAttempts;
+      if (needed > 0) {
+        return 'Only ${t.totalAttempts} attempt${t.totalAttempts == 1 ? '' : 's'}. '
+            'Need $needed more for a reliable read.';
+      }
+      final highNeeded = 20 - t.totalAttempts;
+      return 'Only ${t.totalAttempts} attempts. Need $highNeeded more for '
+          'a high-confidence read.';
     }
-    final pct = (t.rawAccuracy * 100).round();
-    final secs = (t.averageTime.inMilliseconds / 1000).toStringAsFixed(1);
-    final trendSuffix = _trendSuffix(t.trend);
-    String body;
-    if (t.rawAccuracy < 0.6) {
-      body = 'You struggle with ${t.theme} — only $pct% correct. The pattern '
-          'isn\'t recognised yet.';
-    } else if (t.rawAccuracy < 0.8) {
-      body = 'You know ${t.theme} but waver — $pct% correct.';
-    } else if (t.rawAccuracy >= 0.85 && relSpeed < 0.7) {
-      body = '${t.theme} is solid ($pct%), but you take ${secs}s — slower '
-          'than your baseline. Automate the pattern.';
-    } else if (t.rawAccuracy >= 0.85 && relSpeed >= 0.9) {
-      body = '${t.theme} is locked in — $pct% correct and fast recognition.';
-    } else {
-      body = '${t.theme}: $pct% correct, avg ${secs}s.';
-    }
-    return trendSuffix.isEmpty ? body : '$body $trendSuffix';
-  }
 
-  String _trendSuffix(TrendDirection trend) {
-    switch (trend) {
-      case TrendDirection.improving:
-        return '(trending up — keep going)';
-      case TrendDirection.declining:
-        return '(slipping recently — repetition will help)';
-      case TrendDirection.stable:
-        return '';
+    final pct = (t.rawAccuracy * 100).round();
+    final userPct = (userAccuracy * 100).round();
+    final gap = pct - userPct;
+    final secs = (t.averageTime.inMilliseconds / 1000).toStringAsFixed(1);
+
+    // Block 1: accuracy vs baseline.
+    final String accuracyBlock;
+    if (gap >= 5) {
+      accuracyBlock = '$pct%, $gap pts above your $userPct% overall.';
+    } else if (gap <= -5) {
+      accuracyBlock = '$pct%, ${gap.abs()} pts below your $userPct% overall.';
+    } else {
+      accuracyBlock = '$pct%, close to your $userPct% overall.';
     }
+
+    // Block 2: speed vs baseline.
+    final String speedBlock;
+    if (relSpeed >= 1.2) {
+      speedBlock =
+          'Avg ${secs}s, ${relSpeed.toStringAsFixed(1)}× your baseline.';
+    } else if (relSpeed >= 0.8) {
+      speedBlock = 'Avg ${secs}s, on pace with your baseline.';
+    } else {
+      final slow = (1 / relSpeed).toStringAsFixed(1);
+      speedBlock = 'Avg ${secs}s, $slow× slower than baseline.';
+    }
+
+    // Block 3: trend (only if not stable).
+    final String? trendBlock = switch (t.trend) {
+      TrendDirection.improving => 'Trending up.',
+      TrendDirection.declining => 'Slipping recently.',
+      TrendDirection.stable => null,
+    };
+
+    // Block 4: action recommendation.
+    final String? actionBlock;
+    if (t.rawAccuracy < 0.6) {
+      actionBlock = 'Pattern not recognised yet. Drill until ≥85%.';
+    } else if (t.rawAccuracy < 0.8) {
+      actionBlock = 'Wavering. Repetition will solidify it.';
+    } else if (relSpeed < 0.7) {
+      actionBlock = 'Accurate but slow. Automate via repetition.';
+    } else if (t.rawAccuracy >= 0.9 && relSpeed >= 0.9) {
+      actionBlock = 'Locked in.';
+    } else {
+      actionBlock = null;
+    }
+
+    return [accuracyBlock, speedBlock, trendBlock, actionBlock]
+        .whereType<String>()
+        .join(' ');
   }
 }

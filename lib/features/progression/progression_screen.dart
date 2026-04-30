@@ -7,6 +7,8 @@ import '../../data/models/tactical_themes.dart';
 import '../../data/repositories/round_repository.dart';
 import '../../data/repositories/set_repository.dart';
 import '../../data/repositories/stats_repository.dart';
+import '../../widgets/empty_state.dart';
+import '../../widgets/error_view.dart';
 import 'widgets/bar_chart.dart';
 import 'widgets/theme_heatmap.dart';
 import 'widgets/trend_chart.dart';
@@ -32,7 +34,7 @@ class ProgressionScreen extends ConsumerWidget {
       ),
       body: statsAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('Error: $e')),
+        error: (e, _) => const ErrorView(),
         data: (stats) {
           if (stats.isEmpty) {
             return const Center(
@@ -105,7 +107,7 @@ class ProgressionScreen extends ConsumerWidget {
                     child: CircularProgressIndicator(),
                   ),
                 ),
-                error: (e, _) => Text('Error: $e'),
+                error: (e, _) => const ErrorView(compact: true),
                 data: (themes) => ThemeHeatmap(stats: themes),
               ),
               const SizedBox(height: 24),
@@ -142,13 +144,16 @@ class ProgressionScreen extends ConsumerWidget {
                     ),
                   ),
                 ),
-                error: (e, _) => Text('Error: $e'),
+                error: (e, _) => const ErrorView(compact: true),
                 data: (problems) {
                   if (problems.isEmpty) {
-                    return const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 8),
-                      child:
-                          Text('No repeat-mistake puzzles yet — keep going!'),
+                    return const EmptyState(
+                      icon: Icons.thumb_up_alt_outlined,
+                      title: 'No repeat mistakes',
+                      body:
+                          'You haven\'t bombed the same puzzle twice in '
+                          'a row. Keep training.',
+                      compact: true,
                     );
                   }
                   return Column(

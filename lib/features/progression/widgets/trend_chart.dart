@@ -77,7 +77,16 @@ class TrendChart extends StatelessWidget {
                   ),
                   size: Size.infinite,
                 )
-              : const Center(child: Text('No data yet')),
+              : Center(
+                  child: Text(
+                    'No data yet',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurfaceVariant,
+                        ),
+                  ),
+                ),
         ),
       ],
     );
@@ -161,7 +170,18 @@ class _TrendPainter extends CustomPainter {
       tp.paint(canvas, Offset(padLeft - tp.width - 4, y - tp.height / 2));
     }
 
+    // Show at most ~6 evenly-spaced x-axis labels so they never overlap.
+    const maxXLabels = 6;
+    final labelStep = maxLen <= maxXLabels
+        ? 1
+        : (maxLen / maxXLabels).ceil();
     for (int i = 0; i < maxLen; i++) {
+      final isLast = i == maxLen - 1;
+      if (i % labelStep != 0 && !isLast) continue;
+      // Avoid drawing a label too close to the final one.
+      if (!isLast && maxLen > maxXLabels && (maxLen - 1 - i) < labelStep / 2) {
+        continue;
+      }
       final x = padLeft +
           (maxLen == 1 ? plotW / 2 : i * plotW / (maxLen - 1));
       final tp = TextPainter(

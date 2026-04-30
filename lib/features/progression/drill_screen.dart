@@ -6,6 +6,9 @@ import 'package:go_router/go_router.dart';
 
 import '../../data/repositories/puzzle_repository.dart';
 import '../../data/repositories/stats_repository.dart';
+import '../../services/pro_status.dart';
+import '../../widgets/empty_state.dart';
+import '../../widgets/pro_lock.dart';
 import '../solve/puzzle.dart';
 import '../solve/solve_board_controller.dart';
 import '../solve/solve_board_widget.dart';
@@ -68,7 +71,7 @@ class _DrillScreenState extends ConsumerState<DrillScreen> {
       while (_outcomes.length <= _index) {
         _outcomes.add(false);
       }
-      _outcomes[_index] = result.isCorrect;
+      _outcomes[_index] = result.isCorrect && result.hintsUsed == 0;
     });
   }
 
@@ -117,7 +120,18 @@ class _DrillScreenState extends ConsumerState<DrillScreen> {
             ? 'Drill'
             : 'Drill • ${_index + 1}/${_puzzleIds.length}'),
       ),
-      body: SafeArea(child: _buildBody(context)),
+      body: SafeArea(
+        child: !ref.watch(isProProvider)
+            ? const ProGate(
+                featureTitle: 'Weakness drill',
+                featureBlurb:
+                    'Drill puzzles you have previously failed in this set, '
+                    'in order of weakness. Built from your attempt history.',
+                icon: Icons.fitness_center,
+                child: SizedBox.shrink(),
+              )
+            : _buildBody(context),
+      ),
     );
   }
 
@@ -130,18 +144,24 @@ class _DrillScreenState extends ConsumerState<DrillScreen> {
     }
     if (_puzzleIds.isEmpty) {
       return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(24),
-          child: Text(
-            'No problem puzzles yet — keep playing rounds and come back '
-            'when there are some to drill.',
-            textAlign: TextAlign.center,
-          ),
+        child: EmptyState(
+          icon: Icons.fitness_center,
+          title: 'Nothing to drill yet',
+          body:
+              'Repeat-mistake puzzles will appear here after you play '
+              'a couple of rounds.',
         ),
       );
     }
     if (_puzzle == null) {
-      return const Center(child: Text('No puzzle at this position'));
+      return const Center(
+        child: EmptyState(
+          icon: Icons.search_off,
+          title: 'No puzzle here',
+          body: 'This drill slot has no associated puzzle.',
+          compact: true,
+        ),
+      );
     }
     return SolveBoardWidget(
       key: ValueKey('drill-${_puzzle!.id}-$_index'),

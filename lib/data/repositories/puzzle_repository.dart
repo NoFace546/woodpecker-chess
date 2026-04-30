@@ -50,6 +50,24 @@ class PuzzleRepository {
     return getById(row.read<String>('id'));
   }
 
+  /// Returns a popular, low-rated puzzle that has the given theme. Used as
+  /// an example in the theme-explainer sheet.
+  Future<Puzzle?> exampleForTheme(String theme) async {
+    final row = await _db.customSelect(
+      '''
+      SELECT p.id FROM puzzles p
+      JOIN puzzle_themes pt ON pt.puzzle_id = p.id
+      WHERE pt.theme = ? AND p.rating BETWEEN 800 AND 1500
+      ORDER BY p.popularity DESC, p.rating ASC
+      LIMIT 1
+      ''',
+      variables: [Variable.withString(theme)],
+      readsFrom: {_db.puzzles, _db.puzzleThemes},
+    ).getSingleOrNull();
+    if (row == null) return null;
+    return getById(row.read<String>('id'));
+  }
+
   Future<List<String>> distinctThemes() async {
     final rows = await _db
         .customSelect(
@@ -137,7 +155,7 @@ final currentPuzzleProvider = FutureProvider<Puzzle>((ref) async {
 final eloRandomPuzzleProvider = FutureProvider<Puzzle>((ref) async {
   await ref.watch(puzzleSeedProvider.future);
   final repo = ref.watch(puzzleRepositoryProvider);
-  // Read user state once (don't watch — we don't want auto-replace mid-puzzle).
+  // Read user state once (don't watch - we don't want auto-replace mid-puzzle).
   final user = await ref.read(userStateProvider.future);
   final min = (user.elo - 100).clamp(600, 2900);
   final max = (user.elo + 100).clamp(700, 3000);
@@ -155,4 +173,9 @@ final eloRandomPuzzleProvider = FutureProvider<Puzzle>((ref) async {
 final puzzleByIdProvider =
     FutureProvider.family<Puzzle?, String>((ref, id) async {
   return ref.watch(puzzleRepositoryProvider).getById(id);
+});
+
+final puzzleExampleForThemeProvider =
+    FutureProvider.family<Puzzle?, String>((ref, theme) async {
+  return ref.watch(puzzleRepositoryProvider).exampleForTheme(theme);
 });

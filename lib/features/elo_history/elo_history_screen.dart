@@ -4,6 +4,11 @@ import 'package:go_router/go_router.dart';
 
 import '../../data/models/elo_history_entry.dart';
 import '../../data/repositories/user_state_repository.dart';
+import '../../services/pro_status.dart';
+import '../../widgets/empty_state.dart';
+import '../../widgets/error_view.dart';
+import '../../widgets/pro_lock.dart';
+import '../paywall/paywall_screen.dart';
 import '../progression/widgets/trend_chart.dart';
 
 class EloHistoryScreen extends ConsumerWidget {
@@ -15,18 +20,26 @@ class EloHistoryScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('Elo over time')),
       body: historyAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('Error: $e')),
-        data: (history) {
+        loading: () => const _EloHistoryLoading(),
+        error: (e, _) => ErrorView(
+          onRetry: () => ref.invalidate(eloHistoryProvider),
+        ),
+        data: (fullHistory) {
+          final isPro = ref.watch(isProProvider);
+          final cutoff =
+              DateTime.now().subtract(const Duration(days: 30));
+          final history = isPro
+              ? fullHistory
+              : fullHistory.where((e) => e.at.isAfter(cutoff)).toList();
+          final clipped = !isPro && fullHistory.length > history.length;
           if (history.isEmpty) {
-            return const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text(
-                  'No Elo history yet — solve some random puzzles to start '
-                  'tracking your rating.',
-                  textAlign: TextAlign.center,
-                ),
+            return Center(
+              child: EmptyState(
+                icon: Icons.timeline,
+                title: 'No Elo history yet',
+                body:
+                    'Solve random puzzles to start tracking your rating '
+                    'over time.',
               ),
             );
           }
@@ -56,6 +69,11 @@ class EloHistoryScreen extends ConsumerWidget {
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              if (clipped) ...[
+                _ClippedHistoryBanner(
+                    hidden: fullHistory.length - history.length),
+                const SizedBox(height: 12),
+              ],
               TrendChart(
                 title: 'Elo across ${history.length} attempts',
                 series: [
@@ -94,6 +112,65 @@ class EloHistoryScreen extends ConsumerWidget {
   }
 }
 
+class _EloHistoryLoading extends StatelessWidget {
+  const _EloHistoryLoading();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        _ShimmerBlock(height: 220, color: scheme.surfaceContainerHigh),
+        const SizedBox(height: 16),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: List.generate(
+            5,
+            (_) => _ShimmerBlock(
+              height: 62,
+              width: 100,
+              color: scheme.surfaceContainer,
+            ),
+          ),
+        ),
+        const SizedBox(height: 24),
+        _ShimmerBlock(height: 16, width: 120, color: scheme.surfaceContainer),
+        const SizedBox(height: 12),
+        for (var i = 0; i < 6; i++) ...[
+          _ShimmerBlock(height: 20, color: scheme.surfaceContainerHigh),
+          const SizedBox(height: 10),
+        ],
+      ],
+    );
+  }
+}
+
+class _ShimmerBlock extends StatelessWidget {
+  const _ShimmerBlock({
+    required this.height,
+    required this.color,
+    this.width,
+  });
+
+  final double height;
+  final double? width;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(12),
+      ),
+    );
+  }
+}
+
 class _MiniCard extends StatelessWidget {
   const _MiniCard({required this.label, required this.value});
   final String label;
@@ -104,8 +181,28 @@ class _MiniCard extends StatelessWidget {
       width: 100,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(10),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Theme.of(context).colorScheme.surfaceContainerHighest,
+            Theme.of(context).colorScheme.surfaceContainer,
+          ],
+        ),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: Theme.of(context)
+              .colorScheme
+              .outlineVariant
+              .withValues(alpha: 0.5),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.12),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -164,6 +261,46 @@ class _ActivityTile extends StatelessWidget {
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ClippedHistoryBanner extends StatelessWidget {
+  const _ClippedHistoryBanner({required this.hidden});
+  final int hidden;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.surfaceContainerHigh,
+      borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => PaywallScreen.show(
+          context,
+          headline: 'Unlock full Elo history',
+          subhead:
+              'See your rating across months. Free shows the last 30 days.',
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              const ProBadge(),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Last 30 days shown. $hidden earlier '
+                  '${hidden == 1 ? 'attempt' : 'attempts'} hidden.',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+              ),
+              Icon(Icons.chevron_right, color: scheme.onSurfaceVariant),
+            ],
+          ),
         ),
       ),
     );

@@ -18,6 +18,7 @@ class BotSetupScreen extends ConsumerStatefulWidget {
 class _BotSetupScreenState extends ConsumerState<BotSetupScreen> {
   BotLevel _level = BotLevel.casual;
   BotColor _color = BotColor.white;
+  BotAssistMode _assist = BotAssistMode.friendly;
 
   @override
   Widget build(BuildContext context) {
@@ -54,7 +55,14 @@ class _BotSetupScreenState extends ConsumerState<BotSetupScreen> {
             },
             orElse: () => const SizedBox.shrink(),
           ),
-          Text('Difficulty', style: Theme.of(context).textTheme.titleMedium),
+          Row(
+            children: [
+              Text('Difficulty',
+                  style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(width: 8),
+              _CrownsBadge(count: _assist.crowns),
+            ],
+          ),
           const SizedBox(height: 8),
           RadioGroup<BotLevel>(
             groupValue: _level,
@@ -70,6 +78,24 @@ class _BotSetupScreenState extends ConsumerState<BotSetupScreen> {
               ],
             ),
           ),
+          const SizedBox(height: 16),
+          Text('Assistance', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          for (final mode in BotAssistMode.values)
+            Card(
+              color: _assist == mode
+                  ? Theme.of(context).colorScheme.primaryContainer
+                  : null,
+              child: ListTile(
+                leading: _CrownsBadge(count: mode.crowns),
+                title: Text(mode.label),
+                subtitle: Text(mode.description),
+                trailing: _assist == mode
+                    ? const Icon(Icons.check)
+                    : null,
+                onTap: () => setState(() => _assist = mode),
+              ),
+            ),
           const SizedBox(height: 16),
           Text('Your color', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
@@ -138,8 +164,37 @@ class _BotSetupScreenState extends ConsumerState<BotSetupScreen> {
       BotColor.black => Side.black,
       BotColor.random => Random().nextBool() ? Side.white : Side.black,
     };
-    final config = BotConfig(level: _level, userSide: side);
+    final config = BotConfig(
+      level: _level,
+      userSide: side,
+      assistMode: _assist,
+    );
     if (!mounted) return;
     context.push('/play-bot/game', extra: config);
+  }
+}
+
+class _CrownsBadge extends StatelessWidget {
+  const _CrownsBadge({required this.count});
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (int i = 0; i < 3; i++)
+          Padding(
+            padding: const EdgeInsets.only(right: 1),
+            child: Icon(
+              Icons.emoji_events,
+              size: 18,
+              color: i < count
+                  ? const Color(0xFFE0A82E)
+                  : Theme.of(context).colorScheme.outlineVariant,
+            ),
+          ),
+      ],
+    );
   }
 }

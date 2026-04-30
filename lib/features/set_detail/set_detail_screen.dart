@@ -2,9 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../data/models/puzzle_set.dart';
 import '../../data/models/round.dart';
 import '../../data/repositories/round_repository.dart';
 import '../../data/repositories/set_repository.dart';
+import '../../widgets/empty_state.dart';
+import '../../widgets/error_view.dart';
+import '../strengths/widgets/theme_explainer_sheet.dart';
 
 class SetDetailScreen extends ConsumerWidget {
   const SetDetailScreen({super.key, required this.setId});
@@ -37,6 +41,17 @@ class SetDetailScreen extends ConsumerWidget {
           setAsync.maybeWhen(
             data: (s) {
               if (s == null) return const SizedBox.shrink();
+              return IconButton(
+                icon: const Icon(Icons.edit_outlined),
+                tooltip: 'Rename set',
+                onPressed: () => _renameSet(context, ref, s),
+              );
+            },
+            orElse: () => const SizedBox.shrink(),
+          ),
+          setAsync.maybeWhen(
+            data: (s) {
+              if (s == null) return const SizedBox.shrink();
               if (s.isArchived) {
                 return IconButton(
                   icon: const Icon(Icons.unarchive_outlined),
@@ -61,77 +76,67 @@ class SetDetailScreen extends ConsumerWidget {
       ),
       body: setAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('Error: $e')),
+        error: (e, _) => const ErrorView(),
         data: (set) {
-          if (set == null) return const Center(child: Text('Set not found'));
+          if (set == null) {
+            return const Center(
+              child: EmptyState(
+                icon: Icons.help_outline,
+                title: 'Set not found',
+                body: 'It may have been deleted.',
+              ),
+            );
+          }
           return roundsAsync.when(
             loading: () => const Center(child: CircularProgressIndicator()),
-            error: (e, _) => Center(child: Text('Error: $e')),
+            error: (e, _) => const ErrorView(),
             data: (rounds) {
               final activeRound =
                   rounds.where((r) => !r.isCompleted).firstOrNull;
+              final completed = rounds.where((r) => r.isCompleted).length;
               return ListView(
-                padding: const EdgeInsets.all(16),
+                padding:
+                    const EdgeInsets.fromLTRB(20, 8, 20, 32),
                 children: [
-                  Text(
-                    '${set.size} puzzles • '
-                    'rating ${set.filter.ratingMin}–${set.filter.ratingMax}',
-                    style: Theme.of(context).textTheme.bodyMedium,
+                  _SetHero(
+                    set: set,
+                    completedRounds: completed,
+                    activeRound: activeRound,
                   ),
-                  if (set.filter.themes.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(
-                        'Themes: ${set.filter.themes.join(', ')}',
-                        style: Theme.of(context).textTheme.bodySmall,
+                  const SizedBox(height: 16),
+                  _PrimaryRoundCta(
+                    set: set,
+                    rounds: rounds,
+                    activeRound: activeRound,
+                    onStart: () => _startRound(context, ref, set.id),
+                  ),
+                  const SizedBox(height: 24),
+                  _SectionLabel('History'),
+                  if (rounds.any((r) => r.isCompleted))
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton.icon(
+                        onPressed: () => context
+                            .push('/sets/${set.id}/progression'),
+                        icon: const Icon(Icons.show_chart, size: 18),
+                        label: const Text('Open progression'),
                       ),
                     ),
-                  const SizedBox(height: 24),
-                  if (activeRound != null)
-                    FilledButton.icon(
-                      onPressed: () => context.push(
-                        '/sets/${set.id}/rounds/${activeRound.id}',
-                      ),
-                      icon: const Icon(Icons.play_arrow),
-                      label: Text(
-                        'Continue round ${activeRound.roundNumber} '
-                        '(${activeRound.currentPosition}/${set.size})',
-                      ),
-                    )
-                  else
-                    FilledButton.icon(
-                      onPressed: () => _startRound(context, ref, set.id),
-                      icon: const Icon(Icons.play_arrow),
-                      label: Text(
-                        rounds.isEmpty
-                            ? 'Start round 1'
-                            : 'Start round ${rounds.length + 1}',
-                      ),
-                    ),
-                  const SizedBox(height: 24),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text('History',
-                            style: Theme.of(context).textTheme.titleMedium),
-                      ),
-                      if (rounds.any((r) => r.isCompleted))
-                        TextButton.icon(
-                          onPressed: () => context
-                              .push('/sets/${set.id}/progression'),
-                          icon: const Icon(Icons.show_chart, size: 18),
-                          label: const Text('Progression'),
-                        ),
-                    ],
-                  ),
                   const SizedBox(height: 8),
                   if (rounds.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 16),
-                      child: Text('No rounds yet'),
-                    ),
-                  for (final round in rounds.reversed)
-                    _RoundTile(setId: set.id, round: round, total: set.size),
+                    const EmptyState(
+                      icon: Icons.replay,
+                      title: 'No rounds yet',
+                      body:
+                          'Tap "Start round 1" above to begin drilling '
+                          'this set Woodpecker-style.',
+                    )
+                  else
+                    for (final round in rounds.reversed) ...[
+                      _RoundTile(
+                          setId: set.id, round: round, total: set.size),
+                      const SizedBox(height: 8),
+                    ],
                 ],
               );
             },
@@ -148,6 +153,41 @@ class SetDetailScreen extends ConsumerWidget {
     ref.invalidate(roundsForSetProvider(setId));
     if (!context.mounted) return;
     context.push('/sets/$setId/rounds/${round.id}');
+  }
+
+  Future<void> _renameSet(
+    BuildContext context,
+    WidgetRef ref,
+    PuzzleSet set,
+  ) async {
+    final controller = TextEditingController(text: set.name);
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Rename set'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textCapitalization: TextCapitalization.sentences,
+          decoration: const InputDecoration(labelText: 'Set name'),
+          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (newName == null || newName.isEmpty || newName == set.name) return;
+    await ref.read(setRepositoryProvider).rename(set.id, newName);
+    ref.invalidate(setByIdProvider(set.id));
+    ref.invalidate(allSetsProvider);
   }
 
   Future<void> _confirmDelete(BuildContext context, WidgetRef ref) async {
@@ -213,7 +253,290 @@ class SetDetailScreen extends ConsumerWidget {
     ref.invalidate(setByIdProvider(setId));
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Set restored')),
+      const SnackBar(
+        content: Text('Set restored'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+}
+
+class _SetHero extends StatelessWidget {
+  const _SetHero({
+    required this.set,
+    required this.completedRounds,
+    required this.activeRound,
+  });
+
+  final PuzzleSet set;
+  final int completedRounds;
+  final Round? activeRound;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: scheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.fitness_center,
+                  color: scheme.onPrimaryContainer,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      set.name,
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${set.size} puzzles · '
+                      'rating ${set.filter.ratingMin}-${set.filter.ratingMax}',
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: scheme.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (set.filter.themes.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Builder(builder: (_) {
+              const maxVisible = 5;
+              final themes = set.filter.themes;
+              final visible = themes.take(maxVisible).toList();
+              final overflow = themes.length - visible.length;
+              return Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final theme in visible)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: scheme.surfaceContainer,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        theme,
+                        style: Theme.of(context).textTheme.labelSmall,
+                      ),
+                    ),
+                  if (overflow > 0)
+                    Material(
+                      color: scheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(8),
+                      clipBehavior: Clip.antiAlias,
+                      child: InkWell(
+                        onTap: () => _showAllThemes(context, themes),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 4),
+                          child: Text(
+                            '+$overflow',
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelSmall
+                                ?.copyWith(
+                                  color: scheme.onPrimaryContainer,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            }),
+          ],
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              _Stat(
+                label: 'Rounds done',
+                value: '$completedRounds',
+              ),
+              const SizedBox(width: 12),
+              _Stat(
+                label: 'Active',
+                value: activeRound != null
+                    ? '${activeRound!.currentPosition}/${set.size}'
+                    : '-',
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Stat extends StatelessWidget {
+  const _Stat({required this.label, required this.value});
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainer,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: Theme.of(context)
+                .textTheme
+                .labelSmall
+                ?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PrimaryRoundCta extends StatelessWidget {
+  const _PrimaryRoundCta({
+    required this.set,
+    required this.rounds,
+    required this.activeRound,
+    required this.onStart,
+  });
+
+  final PuzzleSet set;
+  final List<Round> rounds;
+  final Round? activeRound;
+  final VoidCallback onStart;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final String title;
+    final String subtitle;
+    final IconData icon;
+    final VoidCallback onTap;
+
+    if (activeRound != null) {
+      title = 'Resume round ${activeRound!.roundNumber}';
+      subtitle =
+          'Puzzle ${activeRound!.currentPosition + 1}/${set.size}';
+      icon = Icons.play_arrow_rounded;
+      onTap = () => GoRouter.of(context).push(
+            '/sets/${set.id}/rounds/${activeRound!.id}',
+          );
+    } else {
+      final next = rounds.length + 1;
+      title = next == 1 ? 'Start round 1' : 'Start round $next';
+      subtitle = 'Drill the same ${set.size} puzzles in fresh order';
+      icon = Icons.replay_rounded;
+      onTap = onStart;
+    }
+
+    return Material(
+      color: scheme.primary,
+      borderRadius: BorderRadius.circular(20),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: scheme.onPrimary.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: scheme.onPrimary, size: 24),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(color: scheme.onPrimary),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(
+                            color: scheme.onPrimary
+                                .withValues(alpha: 0.85),
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.arrow_forward,
+                  color: scheme.onPrimary, size: 20),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel(this.text);
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Text(
+      text.toUpperCase(),
+      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+            color: scheme.onSurfaceVariant,
+            letterSpacing: 1.2,
+            fontWeight: FontWeight.w600,
+          ),
     );
   }
 }
@@ -231,45 +554,194 @@ class _RoundTile extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final scheme = Theme.of(context).colorScheme;
     if (!round.isCompleted) {
-      return Card(
-        child: ListTile(
-          title: Text('Round ${round.roundNumber}'),
-          subtitle:
-              Text('In progress (${round.currentPosition}/$total)'),
-          trailing: const Icon(Icons.pause_circle_outline),
-          onTap: () => context.push('/sets/$setId/rounds/${round.id}'),
+      return Material(
+        color: scheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(14),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () =>
+              GoRouter.of(context).push('/sets/$setId/rounds/${round.id}'),
+          child: Container(
+            decoration: BoxDecoration(
+              border: Border.all(color: scheme.outlineVariant),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              children: [
+                Icon(Icons.pause_circle_outline,
+                    color: scheme.onSurfaceVariant),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Round ${round.roundNumber}',
+                          style: Theme.of(context).textTheme.titleSmall),
+                      const SizedBox(height: 2),
+                      Text(
+                        'In progress · '
+                        '${round.currentPosition}/$total',
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodySmall
+                            ?.copyWith(color: scheme.onSurfaceVariant),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_right,
+                    color: scheme.onSurfaceVariant),
+              ],
+            ),
+          ),
         ),
       );
     }
     final statsAsync = ref.watch(roundStatsProvider(round.id));
-    return Card(
-      child: ListTile(
-        title: Text('Round ${round.roundNumber}'),
-        subtitle: statsAsync.when(
-          loading: () => const Text('Loading…'),
-          error: (_, _) => const Text('Completed'),
-          data: (stats) {
-            if (stats == null || stats.total == 0) {
-              return const Text('Completed');
-            }
-            final pct = (stats.accuracy * 100).round();
-            final median =
-                (stats.medianTime.inMilliseconds / 1000).toStringAsFixed(1);
-            final hints = stats.hintsUsed;
-            final streak = stats.longestFlowStreak;
-            final parts = <String>[
-              '${stats.correct}/${stats.total} ($pct%)',
-              'median ${median}s',
-            ];
-            if (hints > 0) parts.add('$hints hint${hints == 1 ? '' : 's'}');
-            if (streak >= 3) parts.add('$streak-streak');
-            return Text(parts.join(' · '));
-          },
+    return Material(
+      color: scheme.surfaceContainerLow,
+      borderRadius: BorderRadius.circular(14),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () =>
+            GoRouter.of(context).push('/sets/$setId/progression'),
+        child: Container(
+          decoration: BoxDecoration(
+            border: Border.all(color: scheme.outlineVariant),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          padding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: scheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  'R${round.roundNumber}',
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: scheme.onPrimaryContainer,
+                      ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: statsAsync.when(
+                  loading: () => Text(
+                    'Loading…',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                  error: (_, _) => const Text('Completed'),
+                  data: (stats) {
+                    if (stats == null || stats.total == 0) {
+                      return const Text('Completed');
+                    }
+                    final pct = (stats.accuracy * 100).round();
+                    final median = (stats.medianTime.inMilliseconds /
+                            1000)
+                        .toStringAsFixed(1);
+                    final hints = stats.hintsUsed;
+                    final streak = stats.longestFlowStreak;
+                    final parts = <String>[
+                      '${stats.correct}/${stats.total} ($pct%)',
+                      'median ${median}s',
+                    ];
+                    if (hints > 0) {
+                      parts.add(
+                          '$hints hint${hints == 1 ? '' : 's'}');
+                    }
+                    if (streak >= 3) parts.add('$streak-streak');
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Round ${round.roundNumber}',
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          parts.join(' · '),
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodySmall
+                              ?.copyWith(color: scheme.onSurfaceVariant),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+              Icon(Icons.show_chart, color: scheme.onSurfaceVariant),
+            ],
+          ),
         ),
-        trailing: const Icon(Icons.show_chart),
-        onTap: () => context.push('/sets/$setId/progression'),
       ),
     );
   }
+}
+
+void _showAllThemes(BuildContext context, List<String> themes) {
+  showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    builder: (ctx) => SafeArea(
+      child: ListView(
+        shrinkWrap: true,
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Text(
+              'Themes in this set',
+              style: Theme.of(ctx).textTheme.titleLarge,
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(
+              '${themes.length} themes - tap one for its definition.',
+              style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                  ),
+            ),
+          ),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final t in themes)
+                Material(
+                  color: Theme.of(ctx).colorScheme.surfaceContainerHigh,
+                  shape: const StadiumBorder(),
+                  clipBehavior: Clip.antiAlias,
+                  child: InkWell(
+                    onTap: () {
+                      Navigator.of(ctx).pop();
+                      ThemeExplainerSheet.show(context, t);
+                    },
+                    customBorder: const StadiumBorder(),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
+                      child: Text(t),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    ),
+  );
 }

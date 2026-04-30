@@ -10,6 +10,7 @@ import '../models/tactical_themes.dart';
 import '../models/theme_stats.dart';
 import '../models/weakness_entry.dart';
 import 'puzzle_repository.dart';
+import 'user_state_repository.dart';
 
 class StatsRepository {
   StatsRepository(this._db);
@@ -26,7 +27,7 @@ class StatsRepository {
       '''
       SELECT pt.theme,
              COUNT(*) AS total,
-             SUM(CASE WHEN a.is_correct = 1 THEN 1 ELSE 0 END) AS correct,
+             SUM(CASE WHEN a.is_correct = 1 AND a.hints_used = 0 THEN 1 ELSE 0 END) AS correct,
              AVG(a.time_ms) AS avg_time_ms
       FROM attempts a
       JOIN puzzle_themes pt ON pt.puzzle_id = a.puzzle_id
@@ -50,28 +51,34 @@ class StatsRepository {
     }).toList();
   }
 
-  Future<List<EnrichedThemeStats>> globalThemesEnriched() async {
+  Future<List<EnrichedThemeStats>> globalThemesEnriched({
+    required int userElo,
+  }) async {
     final now = DateTime.now();
     final cutoffRecent =
         now.subtract(const Duration(days: 30)).millisecondsSinceEpoch;
     final cutoffOlder =
         now.subtract(const Duration(days: 60)).millisecondsSinceEpoch;
 
+    // Group by (theme, rating-bucket). Bucket size is 200 Elo. Joining
+    // through `puzzles` gives us the puzzle's rating at solve time.
     final rows = await _db.customSelect(
       '''
       SELECT pt.theme,
+        ((p.rating / $kRatingBucketSize) * $kRatingBucketSize) AS bucket_min,
         COUNT(*) AS total,
-        SUM(CASE WHEN a.is_correct = 1 THEN 1 ELSE 0 END) AS correct,
+        SUM(CASE WHEN a.is_correct = 1 AND a.hints_used = 0 THEN 1 ELSE 0 END) AS correct,
         AVG(a.time_ms) AS avg_time_ms,
         SUM(CASE WHEN a.finished_at >= ? THEN 1 ELSE 0 END) AS recent_total,
-        SUM(CASE WHEN a.finished_at >= ? AND a.is_correct = 1 THEN 1 ELSE 0 END) AS recent_correct,
+        SUM(CASE WHEN a.finished_at >= ? AND a.is_correct = 1 AND a.hints_used = 0 THEN 1 ELSE 0 END) AS recent_correct,
         SUM(CASE WHEN a.finished_at >= ? AND a.finished_at < ? THEN 1 ELSE 0 END) AS prev_total,
-        SUM(CASE WHEN a.finished_at >= ? AND a.finished_at < ? AND a.is_correct = 1 THEN 1 ELSE 0 END) AS prev_correct
+        SUM(CASE WHEN a.finished_at >= ? AND a.finished_at < ? AND a.is_correct = 1 AND a.hints_used = 0 THEN 1 ELSE 0 END) AS prev_correct
       FROM attempts a
       JOIN puzzle_themes pt ON pt.puzzle_id = a.puzzle_id
+      JOIN puzzles p ON p.id = a.puzzle_id
       WHERE pt.theme NOT IN ($_excludedPlaceholders)
-      GROUP BY pt.theme
-      ORDER BY total DESC
+      GROUP BY pt.theme, bucket_min
+      ORDER BY pt.theme, bucket_min
       ''',
       variables: [
         Variable.withInt(cutoffRecent),
@@ -82,21 +89,34 @@ class StatsRepository {
         Variable.withInt(cutoffRecent),
         ..._excludedVariables,
       ],
-      readsFrom: {_db.attempts, _db.puzzleThemes},
+      readsFrom: {_db.attempts, _db.puzzleThemes, _db.puzzles},
     ).get();
 
-    return rows.map((r) {
-      return EnrichedThemeStats.compute(
-        theme: r.read<String>('theme'),
+    final byTheme = <String, List<ThemeRatingBucket>>{};
+    for (final r in rows) {
+      final theme = r.read<String>('theme');
+      final bucket = ThemeRatingBucket(
+        bucketMin: r.read<int>('bucket_min'),
         total: r.read<int>('total'),
         correct: r.readNullable<int>('correct') ?? 0,
-        avgMs: (r.readNullable<double>('avg_time_ms') ?? 0).round(),
         recentTotal: r.readNullable<int>('recent_total') ?? 0,
         recentCorrect: r.readNullable<int>('recent_correct') ?? 0,
         prevTotal: r.readNullable<int>('prev_total') ?? 0,
         prevCorrect: r.readNullable<int>('prev_correct') ?? 0,
+        avgTimeMs: (r.readNullable<double>('avg_time_ms') ?? 0).round(),
       );
-    }).toList();
+      (byTheme[theme] ??= []).add(bucket);
+    }
+
+    final stats = byTheme.entries.map((e) {
+      return EnrichedThemeStats.fromBuckets(
+        theme: e.key,
+        buckets: e.value,
+        userElo: userElo,
+      );
+    }).toList()
+      ..sort((a, b) => b.totalAttempts.compareTo(a.totalAttempts));
+    return stats;
   }
 
   Future<PhaseStats> phaseStats() async {
@@ -104,7 +124,7 @@ class StatsRepository {
       '''
       SELECT pt.theme,
              COUNT(*) AS total,
-             SUM(CASE WHEN a.is_correct = 1 THEN 1 ELSE 0 END) AS correct,
+             SUM(CASE WHEN a.is_correct = 1 AND a.hints_used = 0 THEN 1 ELSE 0 END) AS correct,
              AVG(a.time_ms) AS avg_time_ms
       FROM attempts a
       JOIN puzzle_themes pt ON pt.puzzle_id = a.puzzle_id
@@ -166,7 +186,7 @@ class StatsRepository {
       '''
       SELECT pt.theme,
              COUNT(*) AS total,
-             SUM(CASE WHEN a.is_correct = 1 THEN 1 ELSE 0 END) AS correct,
+             SUM(CASE WHEN a.is_correct = 1 AND a.hints_used = 0 THEN 1 ELSE 0 END) AS correct,
              AVG(a.time_ms) AS avg_time_ms
       FROM attempts a
       JOIN puzzle_themes pt ON pt.puzzle_id = a.puzzle_id
@@ -199,6 +219,7 @@ class StatsRepository {
       SELECT puzzle_id, MIN(time_ms) AS best_ms
       FROM attempts
       WHERE is_correct = 1
+        AND hints_used = 0
         AND round_id != ?
         AND round_id IN (SELECT id FROM rounds WHERE set_id = ?)
       GROUP BY puzzle_id
@@ -225,7 +246,7 @@ class StatsRepository {
       SELECT a.puzzle_id, COUNT(*) AS failed_rounds, p.fen, p.rating
       FROM attempts a
       JOIN puzzles p ON p.id = a.puzzle_id
-      WHERE a.is_correct = 0
+      WHERE (a.is_correct = 0 OR a.hints_used > 0)
         AND a.round_id IN (SELECT id FROM rounds WHERE set_id = ?)
       GROUP BY a.puzzle_id
       HAVING failed_rounds >= ?
@@ -263,7 +284,7 @@ class StatsRepository {
       SELECT
         (SELECT COUNT(*) FROM rounds WHERE completed_at IS NOT NULL) AS rounds,
         COUNT(*) AS attempts,
-        SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) AS correct,
+        SUM(CASE WHEN is_correct = 1 AND hints_used = 0 THEN 1 ELSE 0 END) AS correct,
         COALESCE(SUM(time_ms), 0) AS time_ms,
         COALESCE(SUM(hints_used), 0) AS hints
       FROM attempts
@@ -289,7 +310,7 @@ class StatsRepository {
            WHERE r.set_id = s.id AND r.completed_at IS NOT NULL) AS rounds_completed,
         (SELECT COUNT(*) FROM attempts a
            WHERE a.round_id IN (SELECT id FROM rounds WHERE set_id = s.id)) AS total_attempts,
-        (SELECT SUM(CASE WHEN a.is_correct = 1 THEN 1 ELSE 0 END) FROM attempts a
+        (SELECT SUM(CASE WHEN a.is_correct = 1 AND a.hints_used = 0 THEN 1 ELSE 0 END) FROM attempts a
            WHERE a.round_id IN (SELECT id FROM rounds WHERE set_id = s.id)) AS correct_attempts
       FROM puzzle_sets s
       ORDER BY s.created_at DESC
@@ -316,7 +337,7 @@ class StatsRepository {
       SELECT
         CAST(finished_at / 86400000 AS INTEGER) AS day_index,
         COUNT(*) AS total,
-        SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) AS correct,
+        SUM(CASE WHEN is_correct = 1 AND hints_used = 0 THEN 1 ELSE 0 END) AS correct,
         SUM(time_ms) AS total_time_ms
       FROM attempts
       WHERE finished_at >= ?
@@ -391,7 +412,10 @@ final phaseStatsProvider = FutureProvider<PhaseStats>((ref) async {
 
 final enrichedThemeStatsProvider =
     FutureProvider<List<EnrichedThemeStats>>((ref) async {
-  return ref.watch(statsRepositoryProvider).globalThemesEnriched();
+  final user = await ref.watch(userStateProvider.future);
+  return ref
+      .watch(statsRepositoryProvider)
+      .globalThemesEnriched(userElo: user.elo);
 });
 
 final globalMedianTimeProvider = FutureProvider<int>((ref) async {
@@ -402,8 +426,12 @@ final weaknessAnalysisProvider =
     FutureProvider<List<WeaknessEntry>>((ref) async {
   final themes = await ref.watch(enrichedThemeStatsProvider.future);
   final median = await ref.watch(globalMedianTimeProvider.future);
-  return const WeaknessAnalyzer()
-      .analyze(themes: themes, globalMedianMs: median);
+  final globalStats = await ref.watch(globalStatsProvider.future);
+  return const WeaknessAnalyzer().analyze(
+    themes: themes,
+    globalMedianMs: median,
+    userAccuracy: globalStats.accuracy,
+  );
 });
 
 final themeStatsProvider =

@@ -143,7 +143,7 @@ class AppDatabase extends _$AppDatabase {
   factory AppDatabase.inMemory() => AppDatabase(NativeDatabase.memory());
 
   @override
-  int get schemaVersion => 6;
+  int get schemaVersion => 7;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -151,7 +151,7 @@ class AppDatabase extends _$AppDatabase {
           // The bundled puzzles.sqlite asset ships with empty user-data
           // tables (puzzle_sets, rounds, attempts, …) defined against an
           // older schema. createAll uses CREATE TABLE IF NOT EXISTS, so the
-          // stale tables would survive — drop them first so they're
+          // stale tables would survive - drop them first so they're
           // re-created with the current columns.
           await customStatement('DROP TABLE IF EXISTS attempts');
           await customStatement('DROP TABLE IF EXISTS rounds');
@@ -160,6 +160,7 @@ class AppDatabase extends _$AppDatabase {
           await m.createAll();
           await _seedUserState();
           await _seedRandomPlay();
+          await _createPerfIndexes();
         },
         onUpgrade: (m, from, to) async {
           if (from < 2) {
@@ -185,6 +186,9 @@ class AppDatabase extends _$AppDatabase {
             await _ensurePuzzleSetsColumns();
             await _seedRandomPlay();
           }
+          if (from < 7) {
+            await _createPerfIndexes();
+          }
         },
       );
 
@@ -194,6 +198,29 @@ class AppDatabase extends _$AppDatabase {
         id: 'me',
         updatedAt: DateTime.now(),
       ),
+    );
+  }
+
+  Future<void> _createPerfIndexes() async {
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_attempts_finished_at '
+      'ON attempts(finished_at)',
+    );
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_attempts_round_id '
+      'ON attempts(round_id)',
+    );
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_attempts_puzzle_id '
+      'ON attempts(puzzle_id)',
+    );
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_rounds_set_id '
+      'ON rounds(set_id)',
+    );
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_puzzle_sets_archived_at '
+      'ON puzzle_sets(archived_at)',
     );
   }
 
@@ -247,7 +274,7 @@ QueryExecutor _openConnection() {
         await file.create(recursive: true);
         await file.writeAsBytes(bytes, flush: true);
       } catch (_) {
-        // No bundled asset — drift will create an empty database.
+        // No bundled asset - drift will create an empty database.
       }
     }
 

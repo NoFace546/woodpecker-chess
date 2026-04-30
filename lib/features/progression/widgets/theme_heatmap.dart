@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../data/models/theme_stats.dart';
+import '../../../widgets/empty_state.dart';
 
 class ThemeHeatmap extends StatelessWidget {
   const ThemeHeatmap({super.key, required this.stats});
@@ -10,9 +11,11 @@ class ThemeHeatmap extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (stats.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 12),
-        child: Text('No theme data yet — complete a round first.'),
+      return const EmptyState(
+        icon: Icons.donut_small,
+        title: 'No theme data yet',
+        body: 'Complete a round to see per-tactic breakdowns.',
+        compact: true,
       );
     }
     return Column(

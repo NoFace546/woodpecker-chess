@@ -85,7 +85,7 @@ class RoundRepository {
             userMoveUci: Value(userMoveUci),
           ),
         );
-    // Elo is intentionally NOT updated for set-based rounds — those puzzles
+    // Elo is intentionally NOT updated for set-based rounds - those puzzles
     // are pre-filtered by rating, so they're not a fair Elo test. Random
     // free-play attempts (lib/features/solve/solve_screen.dart) update Elo
     // via UserStateRepository directly.
@@ -241,6 +241,59 @@ class RoundRepository {
 
 final roundRepositoryProvider = Provider<RoundRepository>((ref) {
   return RoundRepository(ref.watch(databaseProvider));
+});
+
+class RecentSetActivity {
+  const RecentSetActivity({
+    required this.setId,
+    required this.setName,
+    required this.roundId,
+    required this.roundNumber,
+    required this.currentPosition,
+    required this.totalPuzzles,
+    required this.isComplete,
+  });
+  final String setId;
+  final String setName;
+  final String roundId;
+  final int roundNumber;
+  final int currentPosition;
+  final int totalPuzzles;
+  final bool isComplete;
+}
+
+/// Most recently touched user set + its latest round, for the home dashboard
+/// "continue training" card. Skips system sets and archived sets.
+final recentSetActivityProvider =
+    FutureProvider<RecentSetActivity?>((ref) async {
+  final db = ref.watch(databaseProvider);
+  final row = await db.customSelect(
+    '''
+    SELECT r.id AS round_id,
+           r.set_id,
+           r.round_number,
+           r.current_position,
+           r.completed_at,
+           s.name AS set_name,
+           s.size AS set_size
+    FROM rounds r
+    JOIN puzzle_sets s ON s.id = r.set_id
+    WHERE s.is_system = 0 AND s.archived_at IS NULL
+    ORDER BY r.started_at DESC
+    LIMIT 1
+    ''',
+    readsFrom: {db.rounds, db.puzzleSets},
+  ).getSingleOrNull();
+  if (row == null) return null;
+  return RecentSetActivity(
+    setId: row.read<String>('set_id'),
+    setName: row.read<String>('set_name'),
+    roundId: row.read<String>('round_id'),
+    roundNumber: row.read<int>('round_number'),
+    currentPosition: row.read<int>('current_position'),
+    totalPuzzles: row.read<int>('set_size'),
+    isComplete: row.readNullable<int>('completed_at') != null,
+  );
 });
 
 final roundsForSetProvider =

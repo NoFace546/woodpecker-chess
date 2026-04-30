@@ -27,14 +27,14 @@ class WoodpeckerMethodScreen extends StatelessWidget {
             title: 'The idea',
             body:
                 'Pick a fixed set of tactical puzzles. Solve the same set, in '
-                'changing order, multiple times — until you blast through them '
+                'changing order, multiple times until you blast through them '
                 'on autopilot. Each round should be faster and more accurate '
                 'than the last.',
           ),
           _Section(
             title: 'Why it works',
             body:
-                'Tactical patterns — forks, pins, mate threats, deflections — '
+                'Tactical patterns (forks, pins, mate threats, deflections) '
                 'are recognised, not calculated. A 1500-rated player can spot '
                 'a familiar mating net instantly while a 2400 needs seconds in '
                 'an unfamiliar one. The Woodpecker Method trains exactly this: '
@@ -48,14 +48,14 @@ class WoodpeckerMethodScreen extends StatelessWidget {
             title: 'How to do it',
             body:
                 '1. Pick a set size. Smith recommends 1000 puzzles for serious '
-                'training; 50–250 is realistic for a single training cycle in '
+                'training; 50-250 is realistic for a single training cycle in '
                 'this app.\n\n'
                 '2. Solve the entire set once, no time pressure. This is '
                 'round 1.\n\n'
                 '3. After a short break, solve the same set again. Round 2.\n\n'
                 '4. Repeat. Each round should take less time and produce fewer '
                 'mistakes.\n\n'
-                '5. After 5–7 rounds, the patterns are burned in.',
+                '5. After 5-7 rounds, the patterns are burned in.',
           ),
           _Section(
             title: 'In this app',
@@ -125,7 +125,7 @@ class _Section extends StatelessWidget {
                     style: theme.textTheme.bodyMedium,
                     children: [
                       TextSpan(
-                        text: '• $head — ',
+                        text: '• $head: ',
                         style: const TextStyle(fontWeight: FontWeight.w600),
                       ),
                       TextSpan(text: body),

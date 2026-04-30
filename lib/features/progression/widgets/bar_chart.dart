@@ -29,7 +29,16 @@ class BarChart extends StatelessWidget {
         SizedBox(
           height: height,
           child: values.isEmpty
-              ? const Center(child: Text('No data yet'))
+              ? Center(
+                  child: Text(
+                    'No data yet',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurfaceVariant,
+                        ),
+                  ),
+                )
               : CustomPaint(
                   painter: _BarPainter(
                     values: values,

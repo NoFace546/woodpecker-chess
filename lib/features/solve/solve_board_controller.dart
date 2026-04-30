@@ -10,12 +10,10 @@ import 'move_validator.dart';
 import 'puzzle.dart';
 import 'solve_state.dart';
 
-const _setupMoveDelay = Duration(milliseconds: 600);
+const _setupMoveDelay = Duration(milliseconds: 150);
 const _opponentMoveDelay = Duration(milliseconds: 600);
-const _tickInterval = Duration(milliseconds: 100);
-const _evalDepth = 16;
-const _almostBestThreshold = 30;
-const _inaccuracyThreshold = 100;
+// Keep timer updates coarse so board animations stay smooth on mid devices.
+const _tickInterval = Duration(milliseconds: 500);
 
 class SolveResult {
   const SolveResult({
@@ -41,7 +39,9 @@ class SolveBoardController extends ChangeNotifier {
     this.onResult,
     this.stockfish,
     this.sound,
-  }) : _state = _initial(_puzzle) {
+    Duration Function()? animDuration,
+  })  : animDuration = animDuration ?? (() => Duration.zero),
+        _state = _initial(_puzzle) {
     Future.delayed(_setupMoveDelay, _playSetupMove);
   }
 
@@ -49,6 +49,18 @@ class SolveBoardController extends ChangeNotifier {
   final void Function(SolveResult result)? onResult;
   final StockfishService? stockfish;
   final SoundService? sound;
+  final Duration Function() animDuration;
+
+  /// Plays [snd] timed to the move's visual completion. User moves are
+  /// instant (animation = 0) so sound fires immediately. Opponent moves
+  /// and replay moves are animated, so sound is delayed to land when the
+  /// piece visually stops.
+  void _playMoveSnd(SoundEffect snd, {required bool fromUser}) {
+    final isReplay = _state.status == SolveStatus.revealed;
+    final delay =
+        (fromUser && !isReplay) ? Duration.zero : animDuration();
+    sound?.playAfter(snd, delay);
+  }
 
   SolveState _state;
   Stopwatch? _stopwatch;
@@ -77,7 +89,9 @@ class SolveBoardController extends ChangeNotifier {
     if (_state.status != SolveStatus.loadingSetup) return;
     final setupMove = Move.parse(_state.puzzle.uciMoves[0]);
     if (setupMove == null || !_state.position.isLegal(setupMove)) return;
-    final after = _state.position.playUnchecked(setupMove);
+    final before = _state.position;
+    final after = before.playUnchecked(setupMove);
+    _playMoveSnd(_moveSound(before, setupMove, after), fromUser: false);
     _set(_state.copyWith(
       position: after,
       lastMove: setupMove,
@@ -89,9 +103,14 @@ class SolveBoardController extends ChangeNotifier {
 
   void _startTimer() {
     _stopwatch = Stopwatch()..start();
+    var lastSecond = -1;
     _ticker = Timer.periodic(_tickInterval, (_) {
       if (_state.status != SolveStatus.playing) return;
-      _set(_state.copyWith(elapsedMs: _stopwatch!.elapsedMilliseconds));
+      final elapsed = _stopwatch!.elapsedMilliseconds;
+      final second = elapsed ~/ 1000;
+      if (second == lastSecond) return;
+      lastSecond = second;
+      _set(_state.copyWith(elapsedMs: elapsed));
     });
   }
 
@@ -115,6 +134,10 @@ class SolveBoardController extends ChangeNotifier {
   }
 
   Future<void> onUserMove(NormalMove move) async {
+    if (_state.status == SolveStatus.exploring) {
+      await _playExploringMove(move);
+      return;
+    }
     if (_state.status != SolveStatus.playing) return;
 
     final needsPromotion =
@@ -137,48 +160,48 @@ class SolveBoardController extends ChangeNotifier {
     if (result == MoveCheck.wrong) {
       _stopTimer();
       final expectedUci = _state.puzzle.uciMoves[_state.expectedMoveIndex];
-      final fenBefore = _state.position.fen;
+      if (!_state.position.isLegal(move)) return;
+      final beforeUser = _state.position;
+      final afterUser = beforeUser.playUnchecked(move);
+      final userMoveSnd = _moveSound(beforeUser, move, afterUser);
 
+      // Show the move immediately - no "evaluating" pause.
       _set(_state.copyWith(
-        status: SolveStatus.evaluating,
+        position: afterUser,
+        lastMove: move,
+        status: SolveStatus.wrong,
         userMistakeMove: move,
         expectedUci: expectedUci,
         elapsedMs: _stopwatch?.elapsedMilliseconds ?? _state.elapsedMs,
         clearPromotion: true,
         clearHint: true,
       ));
-
-      final quality = await _classifyMistake(
-        fen: fenBefore,
-        userMove: move.uci,
-        expectedMove: expectedUci,
+      _playMoveSnd(userMoveSnd, fromUser: true);
+      // Subtle wrong cue, after the move sound so they don't stack.
+      sound?.playAfter(
+        SoundEffect.wrong,
+        const Duration(milliseconds: 220),
       );
-      if (_disposed) return;
-
-      _set(_state.copyWith(
-        status: quality.status,
-        cpLoss: quality.cpLoss,
-      ));
       AppHaptics.heavy();
-      sound?.play(SoundEffect.wrong);
       _reportResult(false, userMoveUci: _firstUserMoveUci);
 
-      if (quality.status == SolveStatus.inaccuracy ||
-          quality.status == SolveStatus.wrong) {
-        await _playMistakeContinuation(move);
-      }
+      // Stockfish reply, then enter exploring mode so the user can keep
+      // playing the position to see what happens.
+      await _replyAndEnterExploring(afterUser);
       return;
     }
 
     if (!_state.position.isLegal(move)) return;
-    final afterUser = _state.position.playUnchecked(move);
+    final beforeUser = _state.position;
+    final afterUser = beforeUser.playUnchecked(move);
+    final userMoveSound = _moveSound(beforeUser, move, afterUser);
     final nextIndex = _state.expectedMoveIndex + 1;
 
     if (result == MoveCheck.correctAndDone) {
       _stopTimer();
       // If the user already locked in a result on this puzzle (i.e. they
       // failed first, then hit Try again and played it through), don't
-      // award "Solved" — show the line as reviewed and skip re-reporting.
+      // award "Solved" - show the line as reviewed and skip re-reporting.
       final alreadyReported = _resultReported;
       _set(_state.copyWith(
         position: afterUser,
@@ -189,9 +212,16 @@ class SolveBoardController extends ChangeNotifier {
         clearPromotion: true,
         clearHint: true,
       ));
+      _playMoveSnd(userMoveSound, fromUser: true);
+      if (!alreadyReported) {
+        // Subtle correct chime, just after the final move sound.
+        sound?.playAfter(
+          SoundEffect.correct,
+          const Duration(milliseconds: 220),
+        );
+      }
       AppHaptics.heavy();
       if (!alreadyReported) {
-        sound?.play(SoundEffect.correct);
         _reportResult(true, userMoveUci: _firstUserMoveUci);
       }
       return;
@@ -205,68 +235,114 @@ class SolveBoardController extends ChangeNotifier {
       clearHint: true,
     ));
     AppHaptics.light();
-    sound?.play(SoundEffect.move);
+    _playMoveSnd(userMoveSound, fromUser: true);
 
     await Future.delayed(_opponentMoveDelay);
     _playOpponentReply();
   }
 
-  Future<void> _playMistakeContinuation(NormalMove userMove) async {
-    final sf = stockfish;
-    if (sf == null) return;
-    if (!_state.position.isLegal(userMove)) return;
-    final afterUser = _state.position.playUnchecked(userMove);
-
-    await Future.delayed(_opponentMoveDelay);
-    if (_disposed) return;
-    _set(_state.copyWith(position: afterUser, lastMove: userMove));
-
-    if (afterUser.isGameOver) return;
-
-    final String? replyUci;
-    try {
-      replyUci = await sf.bestMove(fen: afterUser.fen, depth: 12);
-    } catch (_) {
+  Future<void> _replyAndEnterExploring(Position afterUser) async {
+    if (afterUser.isGameOver) {
+      _set(_state.copyWith(status: SolveStatus.exploring));
       return;
     }
-    if (_disposed || replyUci == null) return;
-
-    final reply = Move.parse(replyUci);
-    if (reply == null || !afterUser.isLegal(reply)) return;
-    final afterReply = afterUser.playUnchecked(reply);
-
     await Future.delayed(_opponentMoveDelay);
     if (_disposed) return;
-    _set(_state.copyWith(position: afterReply, lastMove: reply));
+    final sf = stockfish;
+    String? replyUci;
+    if (sf != null) {
+      try {
+        replyUci = await sf.bestMove(fen: afterUser.fen, depth: 8);
+      } catch (e) {
+        debugPrint('[wrong-reply] stockfish bestMove threw: $e');
+      }
+    }
+    if (_disposed) return;
+    // Whatever happens below, we MUST end in exploring so onUserMove keeps
+    // funnelling the user's free moves into _playExploringMove.
+    if (replyUci == null) {
+      debugPrint('[wrong-reply] no reply UCI; entering exploring without bot move');
+      _set(_state.copyWith(status: SolveStatus.exploring));
+      return;
+    }
+    final reply = Move.parse(replyUci);
+    if (reply == null || !afterUser.isLegal(reply)) {
+      debugPrint('[wrong-reply] reply unparseable or illegal: $replyUci');
+      _set(_state.copyWith(status: SolveStatus.exploring));
+      return;
+    }
+    final afterReply = afterUser.playUnchecked(reply);
+    _playMoveSnd(_moveSound(afterUser, reply, afterReply), fromUser: false);
+    _set(_state.copyWith(
+      position: afterReply,
+      lastMove: reply,
+      status: SolveStatus.exploring,
+    ));
   }
 
-  Future<_MistakeQuality> _classifyMistake({
-    required String fen,
-    required String userMove,
-    required String expectedMove,
-  }) async {
+  Future<void> _playExploringMove(NormalMove move) async {
+    final needsPromotion = isPromotionPawnMove(_state.position, move) &&
+        move.promotion == null;
+    if (needsPromotion) {
+      _set(_state.copyWith(promotionMove: move));
+      return;
+    }
+    if (!_state.position.isLegal(move)) {
+      debugPrint('[explore] user move illegal: $move');
+      return;
+    }
+    final before = _state.position;
+    final after = before.playUnchecked(move);
+    _playMoveSnd(_moveSound(before, move, after), fromUser: true);
+    AppHaptics.light();
+    // Always force status back to exploring on every user move so a stray
+    // state change can't leave us stuck.
+    _set(_state.copyWith(
+      position: after,
+      lastMove: move,
+      status: SolveStatus.exploring,
+      clearPromotion: true,
+    ));
+    if (after.isGameOver) {
+      debugPrint('[explore] game over after user move');
+      return;
+    }
+
     final sf = stockfish;
     if (sf == null) {
-      return const _MistakeQuality(SolveStatus.wrong, null);
+      debugPrint('[explore] stockfish unavailable; no reply');
+      return;
     }
+    await Future.delayed(_opponentMoveDelay);
+    if (_disposed) return;
+    String? replyUci;
     try {
-      final results = await Future.wait([
-        sf.evaluateAfterMove(fen: fen, moveUci: userMove, depth: _evalDepth),
-        sf.evaluateAfterMove(fen: fen, moveUci: expectedMove, depth: _evalDepth),
-      ]);
-      final cpUser = results[0];
-      final cpExpected = results[1];
-      final loss = cpExpected - cpUser;
-      if (loss < _almostBestThreshold) {
-        return _MistakeQuality(SolveStatus.almostBest, loss < 0 ? 0 : loss);
-      }
-      if (loss < _inaccuracyThreshold) {
-        return _MistakeQuality(SolveStatus.inaccuracy, loss);
-      }
-      return _MistakeQuality(SolveStatus.wrong, loss);
-    } catch (_) {
-      return const _MistakeQuality(SolveStatus.wrong, null);
+      replyUci = await sf.bestMove(fen: after.fen, depth: 10);
+    } catch (e) {
+      debugPrint('[explore] stockfish bestMove threw: $e');
+      return;
     }
+    if (_disposed) return;
+    if (replyUci == null) {
+      debugPrint('[explore] stockfish returned null bestMove');
+      return;
+    }
+    final reply = Move.parse(replyUci);
+    if (reply == null) {
+      debugPrint('[explore] could not parse reply UCI: $replyUci');
+      return;
+    }
+    if (!after.isLegal(reply)) {
+      debugPrint('[explore] reply illegal in current position: $replyUci');
+      return;
+    }
+    final afterReply = after.playUnchecked(reply);
+    _playMoveSnd(_moveSound(after, reply, afterReply), fromUser: false);
+    _set(_state.copyWith(
+      position: afterReply,
+      lastMove: reply,
+      status: SolveStatus.exploring,
+    ));
   }
 
   void onPromotionSelected(Role role) {
@@ -284,7 +360,9 @@ class SolveBoardController extends ChangeNotifier {
     if (_state.expectedMoveIndex >= _state.puzzle.uciMoves.length) return;
     final move = Move.parse(_state.puzzle.uciMoves[_state.expectedMoveIndex]);
     if (move == null || !_state.position.isLegal(move)) return;
-    final after = _state.position.playUnchecked(move);
+    final before = _state.position;
+    final after = before.playUnchecked(move);
+    _playMoveSnd(_moveSound(before, move, after), fromUser: false);
     _set(_state.copyWith(
       position: after,
       lastMove: move,
@@ -295,7 +373,7 @@ class SolveBoardController extends ChangeNotifier {
   void resetForRetry() {
     _stopTimer();
     // Keep _resultReported = true so the retry doesn't record a second
-    // attempt — the failed first try is the one that counts in stats.
+    // attempt - the failed first try is the one that counts in stats.
     _firstUserMoveUci = null;
     _set(_initial(_puzzle));
     Future.delayed(_setupMoveDelay, _playSetupMove);
@@ -324,7 +402,9 @@ class SolveBoardController extends ChangeNotifier {
       final uci = _puzzle.uciMoves[i];
       final move = Move.parse(uci);
       if (move == null || !pos.isLegal(move)) break;
+      final before = pos;
       pos = pos.playUnchecked(move);
+      _playMoveSnd(_moveSound(before, move, pos), fromUser: false);
       _set(_state.copyWith(
         position: pos,
         lastMove: move,
@@ -355,8 +435,10 @@ class SolveBoardController extends ChangeNotifier {
   }
 }
 
-class _MistakeQuality {
-  const _MistakeQuality(this.status, this.cpLoss);
-  final SolveStatus status;
-  final int? cpLoss;
+SoundEffect _moveSound(Position before, Move move, Position after) {
+  // Check is signalled visually; no separate dramatic sound.
+  if (move is NormalMove && before.board.pieceAt(move.to) != null) {
+    return SoundEffect.capture;
+  }
+  return SoundEffect.move;
 }

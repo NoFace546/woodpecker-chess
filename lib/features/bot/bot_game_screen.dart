@@ -8,7 +8,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../data/repositories/bot_game_repository.dart';
+import '../../services/app_preferences.dart';
+import '../../services/board_appearance.dart';
+import '../../services/sound_service.dart';
 import '../../services/stockfish_service.dart';
+import '../../widgets/captured_row.dart';
+import '../solve/solve_board_widget.dart' show LastMoveSquareBorder;
 import 'bot_config.dart';
 import 'bot_controller.dart';
 
@@ -28,6 +33,8 @@ class BotGameScreen extends ConsumerStatefulWidget {
 
 class _BotGameScreenState extends ConsumerState<BotGameScreen> {
   late BotGameController _controller;
+  String? _validMovesFen;
+  IMap<Square, ISet<Square>>? _validMovesCache;
 
   @override
   void initState() {
@@ -36,6 +43,8 @@ class _BotGameScreenState extends ConsumerState<BotGameScreen> {
       config: widget.config,
       stockfish: ref.read(stockfishServiceProvider),
       repo: ref.read(botGameRepositoryProvider),
+      sound: ref.read(soundServiceProvider),
+      animDuration: () => ref.read(animationSpeedProvider).duration,
       resumeFrom: widget.resumeFrom,
     )..addListener(_onChange);
   }
@@ -73,7 +82,8 @@ class _BotGameScreenState extends ConsumerState<BotGameScreen> {
           FilledButton(
             onPressed: () {
               Navigator.pop(ctx);
-              if (mounted) context.pop();
+              if (!mounted) return;
+              context.go('/play-bot/game', extra: widget.config);
             },
             child: const Text('New game'),
           ),
@@ -106,10 +116,114 @@ class _BotGameScreenState extends ConsumerState<BotGameScreen> {
   @override
   Widget build(BuildContext context) {
     final state = _controller.state;
+    final boardTheme = ref.watch(boardThemeProvider);
+    final pieceSet = ref.watch(pieceSetProvider);
+    final showCoords = ref.watch(showCoordinatesProvider);
+    final showMoves = ref.watch(showLegalMovesProvider);
+    final animSpeed = ref.watch(animationSpeedProvider);
+    final autoFlip = ref.watch(autoFlipBoardProvider);
+    final movedBySide = state.position.turn.opposite;
+    final isUserMove =
+        state.lastMove != null && movedBySide == state.userSide;
+    final animDuration =
+        isUserMove ? Duration.zero : animSpeed.duration;
+    final assist = widget.config.assistMode;
+    final canHint = assist.hintsAllowed &&
+        (assist.hintsUnlimited ||
+            state.hintsUsed < assist.hintLimit) &&
+        state.status == BotGameStatus.awaitingUser;
+    final canTakeback = assist.takebacksAllowed &&
+        (assist.takebacksUnlimited ||
+            state.takebacksUsed < assist.takebackLimit) &&
+        state.status != BotGameStatus.finished;
     return Scaffold(
       appBar: AppBar(
-        title: Text('vs ${widget.config.level.label}'),
+        title: Row(
+          children: [
+            Flexible(
+              child: Text(
+                'vs ${widget.config.level.label}',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 8),
+            for (int i = 0; i < 3; i++)
+              Icon(
+                Icons.emoji_events,
+                size: 16,
+                color: i < assist.crowns
+                    ? const Color(0xFFE0A82E)
+                    : Theme.of(context).colorScheme.outlineVariant,
+              ),
+          ],
+        ),
         actions: [
+          if (assist.takebacksAllowed &&
+              state.status != BotGameStatus.finished)
+            IconButton(
+              icon: const Icon(Icons.undo),
+              tooltip: assist.takebacksUnlimited
+                  ? 'Takeback'
+                  : 'Takeback (${assist.takebackLimit - state.takebacksUsed} left)',
+              onPressed: () {
+                if (canTakeback) {
+                  _controller.takeback();
+                  return;
+                }
+                if (state.status == BotGameStatus.finished) return;
+                if (state.status == BotGameStatus.thinking) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Wait for the opponent move first.'),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                  return;
+                }
+                if (!assist.takebacksUnlimited &&
+                    state.takebacksUsed >= assist.takebackLimit) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('No takebacks left in this mode.'),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                }
+              },
+            ),
+          if (assist.hintsAllowed &&
+              state.status != BotGameStatus.finished)
+            IconButton(
+              icon: const Icon(Icons.lightbulb_outline),
+              tooltip: assist.hintsUnlimited
+                  ? 'Hint'
+                  : 'Hint (${assist.hintLimit - state.hintsUsed} left)',
+              onPressed: () {
+                if (canHint) {
+                  _controller.requestHint();
+                  return;
+                }
+                if (state.status == BotGameStatus.finished) return;
+                if (state.status == BotGameStatus.thinking) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Hints are available on your turn.'),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                  return;
+                }
+                if (!assist.hintsUnlimited &&
+                    state.hintsUsed >= assist.hintLimit) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('No hints left in this mode.'),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                }
+              },
+            ),
           if (state.status != BotGameStatus.finished)
             IconButton(
               icon: const Icon(Icons.flag_outlined),
@@ -121,6 +235,12 @@ class _BotGameScreenState extends ConsumerState<BotGameScreen> {
       body: SafeArea(
         child: Column(
           children: [
+            CapturedRow(
+              captorSide: (autoFlip ? state.userSide : Side.white).opposite,
+              initialPosition: Chess.initial,
+              currentPosition: state.position,
+              pieceAssets: pieceSet.assets,
+            ),
             Expanded(
               child: Center(
                 child: LayoutBuilder(
@@ -129,14 +249,32 @@ class _BotGameScreenState extends ConsumerState<BotGameScreen> {
                       constraints.maxWidth,
                       constraints.maxHeight,
                     );
-                    return Chessboard(
+                    final lastTo = state.lastMove?.to;
+                    final boardOrientation =
+                        autoFlip ? state.userSide : Side.white;
+                    return RepaintBoundary(
+                      child: Stack(
+                        children: [
+                      Chessboard(
                       size: size,
-                      orientation: state.userSide,
+                      orientation: boardOrientation,
                       fen: state.position.fen,
                       lastMove: state.lastMove,
-                      settings: const ChessboardSettings(
-                        enableCoordinates: true,
-                        animationDuration: Duration(milliseconds: 200),
+                      shapes: state.hintMove != null
+                          ? ISet({
+                              Arrow(
+                                color: const Color(0xCC2E7D32),
+                                orig: state.hintMove!.from,
+                                dest: state.hintMove!.to,
+                              ),
+                            })
+                          : null,
+                      settings: ChessboardSettings(
+                        enableCoordinates: showCoords,
+                        showValidMoves: showMoves,
+                        animationDuration: animDuration,
+                        colorScheme: boardTheme.colors,
+                        pieceAssets: pieceSet.assets,
                       ),
                       game: GameData(
                         playerSide: _playerSide(state),
@@ -157,10 +295,25 @@ class _BotGameScreenState extends ConsumerState<BotGameScreen> {
                           }
                         },
                       ),
+                    ),
+                      if (lastTo != null)
+                        LastMoveSquareBorder(
+                          to: lastTo,
+                          orientation: boardOrientation,
+                          boardSize: size,
+                        ),
+                        ],
+                      ),
                     );
                   },
                 ),
               ),
+            ),
+            CapturedRow(
+              captorSide: autoFlip ? state.userSide : Side.white,
+              initialPosition: Chess.initial,
+              currentPosition: state.position,
+              pieceAssets: pieceSet.assets,
             ),
             _StatusBar(state: state),
           ],
@@ -178,7 +331,14 @@ class _BotGameScreenState extends ConsumerState<BotGameScreen> {
     if (state.status != BotGameStatus.awaitingUser) {
       return const IMap<Square, ISet<Square>>.empty();
     }
-    return makeLegalMoves(state.position);
+    final fen = state.position.fen;
+    if (_validMovesFen == fen && _validMovesCache != null) {
+      return _validMovesCache!;
+    }
+    final moves = makeLegalMoves(state.position);
+    _validMovesFen = fen;
+    _validMovesCache = moves;
+    return moves;
   }
 
   Future<void> _confirmResign() async {
@@ -238,11 +398,11 @@ class _StatusBar extends StatelessWidget {
     if (state.outcome != null) {
       switch (state.outcome!) {
         case BotGameOutcome.userWon:
-          return ('You won — ${state.outcomeReason}', colors.primaryContainer);
+          return ('You won. ${state.outcomeReason}', colors.primaryContainer);
         case BotGameOutcome.botWon:
-          return ('You lost — ${state.outcomeReason}', colors.errorContainer);
+          return ('You lost. ${state.outcomeReason}', colors.errorContainer);
         case BotGameOutcome.draw:
-          return ('Draw — ${state.outcomeReason}', colors.surfaceContainerHigh);
+          return ('Draw. ${state.outcomeReason}', colors.surfaceContainerHigh);
         case BotGameOutcome.resigned:
           return ('Resigned', colors.errorContainer);
       }

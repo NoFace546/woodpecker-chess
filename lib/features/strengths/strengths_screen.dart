@@ -7,7 +7,13 @@ import '../../data/models/weakness_entry.dart';
 import '../../data/repositories/stats_repository.dart';
 import '../../data/repositories/user_state_repository.dart';
 import '../../services/training_recommender.dart';
+import '../../services/pro_status.dart';
+import '../../widgets/empty_state.dart';
+import '../../widgets/error_view.dart';
+import '../../widgets/pro_lock.dart';
+import '../paywall/paywall_screen.dart';
 import 'widgets/phase_radar.dart';
+import 'widgets/theme_explainer_sheet.dart';
 
 class StrengthsScreen extends ConsumerWidget {
   const StrengthsScreen({super.key});
@@ -18,6 +24,7 @@ class StrengthsScreen extends ConsumerWidget {
     final userAsync = ref.watch(userStateProvider);
     final phaseAsync = ref.watch(phaseStatsProvider);
     final allThemesAsync = ref.watch(allTacticalThemesProvider);
+    final globalStatsAsync = ref.watch(globalStatsProvider);
     return Scaffold(
       appBar: AppBar(
         title: const Text('Strengths & weaknesses'),
@@ -41,21 +48,38 @@ class StrengthsScreen extends ConsumerWidget {
           ),
         ],
       ),
-      body: analysisAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('Error: $e')),
+      body: !ref.watch(isProProvider)
+          ? _StrengthsSneakPeek(
+              analysisAsync: analysisAsync,
+              phaseAsync: phaseAsync,
+              globalStatsAsync: globalStatsAsync,
+            )
+          : analysisAsync.when(
+        loading: () => const _StrengthsLoading(),
+        error: (e, _) => ErrorView(
+          onRetry: () {
+            ref.invalidate(weaknessAnalysisProvider);
+            ref.invalidate(phaseStatsProvider);
+            ref.invalidate(globalStatsProvider);
+          },
+        ),
         data: (entries) {
-          final totalAttempts =
-              entries.fold<int>(0, (s, e) => s + e.stats.totalAttempts);
-          if (entries.isEmpty || totalAttempts < 10) {
-            return const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text(
-                  'Solve more puzzles to unlock your strengths analysis.\n\n'
-                  'You need at least 10 attempts across a few themes.',
-                  textAlign: TextAlign.center,
-                ),
+          // True unique-attempt count from the attempts table (not the sum
+          // across themes - each puzzle has multiple tactical themes, so
+          // summing per-theme totals would over- or undercount depending on
+          // how many tactical themes pass the filter).
+          final totalAttempts = globalStatsAsync.maybeWhen(
+            data: (g) => g.totalAttempts,
+            orElse: () => 0,
+          );
+          if (entries.isEmpty || totalAttempts < 1) {
+            return Center(
+              child: EmptyState(
+                icon: Icons.compare_arrows,
+                title: 'No theme data yet',
+                body:
+                    'Solve a puzzle to start populating per-theme insights. '
+                    'Confidence levels grow as you build attempts.',
               ),
             );
           }
@@ -64,7 +88,7 @@ class StrengthsScreen extends ConsumerWidget {
               .toList();
           // Split the ranked list so weaknesses and strengths never overlap.
           // With <6 high-confidence themes there isn't enough data to call
-          // anything a "strength" — show only the weak end and a hint.
+          // anything a "strength" - show only the weak end and a hint.
           final weakest = highConf.take(3).toList();
           final weakIds = weakest.map((e) => e.theme).toSet();
           final strongest = highConf.length < 6
@@ -99,9 +123,12 @@ class StrengthsScreen extends ConsumerWidget {
               phaseAsync.when(
                 loading: () => const SizedBox(
                   height: 240,
-                  child: Center(child: CircularProgressIndicator()),
+                  child: _StrengthsLoadingCard(),
                 ),
-                error: (e, _) => Text('Error: $e'),
+                error: (e, _) => ErrorView(
+                  compact: true,
+                  onRetry: () => ref.invalidate(phaseStatsProvider),
+                ),
                 data: (phases) => PhaseRadar(stats: phases),
               ),
               const SizedBox(height: 24),
@@ -184,7 +211,7 @@ class StrengthsScreen extends ConsumerWidget {
             children: [
               Text(
                 'Themes are ranked by the Wilson lower bound of an 80% '
-                "confidence interval — not raw accuracy. With few attempts "
+                "confidence interval, not raw accuracy. With few attempts "
                 'we trust the score less, so a theme with 3/3 (100%) ranks '
                 'below one with 18/20 (90%).',
               ),
@@ -204,7 +231,7 @@ class StrengthsScreen extends ConsumerWidget {
                 'Both come from the same ranked list. The 3 worst '
                 'high-confidence themes are weaknesses; the 3 best are '
                 'strengths. Strengths only appear once you have at least '
-                '6 high-confidence themes — otherwise everything would be '
+                '6 high-confidence themes; otherwise everything would be '
                 'both top-3 and bottom-3.',
               ),
               SizedBox(height: 12),
@@ -247,8 +274,70 @@ class StrengthsScreen extends ConsumerWidget {
       context.go('/sets/${result.set.id}');
     } catch (e) {
       messenger.hideCurrentSnackBar();
-      messenger.showSnackBar(SnackBar(content: Text('Failed: $e')));
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Could not build a recommended set right now. Please try again.',
+          ),
+        ),
+      );
     }
+  }
+}
+
+class _StrengthsLoading extends StatelessWidget {
+  const _StrengthsLoading();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        _StrengthsLoadingCard(
+          height: 56,
+          color: scheme.tertiaryContainer,
+        ),
+        const SizedBox(height: 16),
+        _StrengthsLoadingCard(height: 14, width: 220),
+        const SizedBox(height: 20),
+        _StrengthsLoadingCard(height: 16, width: 110),
+        const SizedBox(height: 8),
+        _StrengthsLoadingCard(height: 240),
+        const SizedBox(height: 20),
+        _StrengthsLoadingCard(height: 16, width: 140),
+        const SizedBox(height: 8),
+        for (var i = 0; i < 3; i++) ...[
+          _StrengthsLoadingCard(height: 90),
+          const SizedBox(height: 8),
+        ],
+      ],
+    );
+  }
+}
+
+class _StrengthsLoadingCard extends StatelessWidget {
+  const _StrengthsLoadingCard({
+    this.height = 88,
+    this.width,
+    this.color,
+  });
+
+  final double height;
+  final double? width;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        color: color ?? scheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(12),
+      ),
+    );
   }
 }
 
@@ -268,13 +357,13 @@ class _SufficiencyBanner extends StatelessWidget {
     Color fg;
     IconData icon;
     if (totalAttempts < 30) {
-      text = 'Exploring your style — solve ${30 - totalAttempts} more '
+      text = 'Exploring your style. Solve ${30 - totalAttempts} more '
           'puzzles for high-confidence analysis.';
       bg = scheme.tertiaryContainer;
       fg = scheme.onTertiaryContainer;
       icon = Icons.explore_outlined;
     } else if (highConfCount < 3) {
-      text = 'Confidence improving — most themes still need more data. '
+      text = 'Confidence improving. Most themes still need more data. '
           'Themes with low data are excluded from top-3 ranking.';
       bg = scheme.surfaceContainerHigh;
       fg = scheme.onSurface;
@@ -354,12 +443,23 @@ class _Entry extends StatelessWidget {
                     spacing: 6,
                     runSpacing: 4,
                     children: [
-                      Text(
-                        entry.theme,
-                        style: Theme.of(context)
-                            .textTheme
-                            .titleSmall
-                            ?.copyWith(color: fg),
+                      InkWell(
+                        onTap: () =>
+                            ThemeExplainerSheet.show(context, entry.theme),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              entry.theme,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleSmall
+                                  ?.copyWith(color: fg),
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(Icons.info_outline, size: 14, color: fg),
+                          ],
+                        ),
                       ),
                       _TrendIcon(trend: entry.trend, color: fg),
                       _ConfidenceBadge(
@@ -402,26 +502,38 @@ class _UnattemptedRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Opacity(
-      opacity: 0.55,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                theme,
-                style: Theme.of(context).textTheme.bodyMedium,
+    return InkWell(
+      onTap: () => ThemeExplainerSheet.show(context, theme),
+      child: Opacity(
+        opacity: 0.55,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Row(
+            children: [
+              Expanded(
+                child: Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        theme,
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(Icons.info_outline,
+                        size: 14, color: scheme.onSurfaceVariant),
+                  ],
+                ),
               ),
-            ),
-            Text(
-              'not attempted',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                    fontStyle: FontStyle.italic,
-                  ),
-            ),
-          ],
+              Text(
+                'not attempted',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                      fontStyle: FontStyle.italic,
+                    ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -439,7 +551,9 @@ class _CompactRow extends StatelessWidget {
         (entry.stats.averageTime.inMilliseconds / 1000).toStringAsFixed(1);
     final isLow = entry.confidence == ConfidenceLevel.low;
     final scheme = Theme.of(context).colorScheme;
-    return Opacity(
+    return InkWell(
+      onTap: () => ThemeExplainerSheet.show(context, entry.theme),
+      child: Opacity(
       opacity: isLow ? 0.55 : 1,
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 6),
@@ -459,6 +573,9 @@ class _CompactRow extends StatelessWidget {
                           style: Theme.of(context).textTheme.bodyMedium,
                         ),
                       ),
+                      const SizedBox(width: 4),
+                      Icon(Icons.info_outline,
+                          size: 14, color: scheme.onSurfaceVariant),
                       const SizedBox(width: 6),
                       _TrendIcon(trend: entry.trend, color: scheme.onSurface),
                     ],
@@ -484,6 +601,7 @@ class _CompactRow extends StatelessWidget {
             ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -538,6 +656,295 @@ class _ConfidenceBadge extends StatelessWidget {
       child: Text(
         label,
         style: TextStyle(fontSize: 10, color: color),
+      ),
+    );
+  }
+}
+
+class _StrengthsSneakPeek extends StatelessWidget {
+  const _StrengthsSneakPeek({
+    required this.analysisAsync,
+    required this.phaseAsync,
+    required this.globalStatsAsync,
+  });
+
+  final AsyncValue<List<WeaknessEntry>> analysisAsync;
+  final AsyncValue<dynamic> phaseAsync;
+  final AsyncValue<dynamic> globalStatsAsync;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final entries = analysisAsync.value ?? const <WeaknessEntry>[];
+    final highConf = entries
+        .where((e) => e.confidence != ConfidenceLevel.low)
+        .toList();
+    final topWeakness = highConf.isNotEmpty ? highConf.first : null;
+    final remainingThemes = (entries.length - 1).clamp(0, 999);
+    final phase = phaseAsync.value;
+    final hiddenWeaknesses = highConf.length > 1
+        ? highConf.skip(1).take(3).toList()
+        : const <WeaknessEntry>[];
+    final weakIds = highConf.take(1).map((e) => e.theme).toSet();
+    final hiddenStrengths = highConf.length >= 6
+        ? highConf.reversed
+            .where((e) => !weakIds.contains(e.theme))
+            .take(3)
+            .toList()
+            .reversed
+            .toList()
+        : const <WeaknessEntry>[];
+
+    return Stack(
+      children: [
+        ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 220),
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: scheme.primaryContainer.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                    color: scheme.primary.withValues(alpha: 0.3)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.visibility_outlined,
+                      size: 18, color: scheme.onPrimaryContainer),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Preview · Pro unlocks the full per-theme breakdown',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: scheme.onPrimaryContainer,
+                          ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text('Game phases',
+                style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            if (phase != null)
+              PhaseRadar(stats: phase)
+            else
+              const SizedBox(
+                height: 240,
+                child: Center(child: CircularProgressIndicator()),
+              ),
+            const SizedBox(height: 24),
+            Text('Your top weakness',
+                style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            if (topWeakness != null)
+              _Entry(entry: topWeakness, weakness: true)
+            else
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerHigh,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  'Solve a few more puzzles to surface your first '
+                  'high-confidence weakness here.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                ),
+              ),
+            const SizedBox(height: 24),
+            Stack(
+              children: [
+                IgnorePointer(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Other weaknesses',
+                          style:
+                              Theme.of(context).textTheme.titleMedium),
+                      const SizedBox(height: 8),
+                      if (hiddenWeaknesses.isEmpty)
+                        for (var i = 0; i < 2; i++)
+                          _LockedBar(
+                            accuracy: i == 0 ? 0.55 : 0.65,
+                            placeholder: true,
+                          )
+                      else
+                        for (final w in hiddenWeaknesses)
+                          _LockedBar(
+                            accuracy: w.stats.rawAccuracy,
+                            placeholder: false,
+                          ),
+                      const SizedBox(height: 16),
+                      Text('Top 3 strengths',
+                          style:
+                              Theme.of(context).textTheme.titleMedium),
+                      const SizedBox(height: 8),
+                      if (hiddenStrengths.isEmpty)
+                        for (var i = 0; i < 2; i++)
+                          _LockedBar(
+                            accuracy: i == 0 ? 0.85 : 0.92,
+                            placeholder: true,
+                          )
+                      else
+                        for (final s in hiddenStrengths)
+                          _LockedBar(
+                            accuracy: s.stats.rawAccuracy,
+                            placeholder: false,
+                          ),
+                    ],
+                  ),
+                ),
+                Positioned.fill(
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: scheme.surface,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: scheme.outlineVariant),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.lock_outline, size: 14),
+                          const SizedBox(width: 6),
+                          Text(
+                            '$remainingThemes more themes locked',
+                            style:
+                                Theme.of(context).textTheme.labelMedium,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: Container(
+            decoration: BoxDecoration(
+              color: scheme.surface,
+              border:
+                  Border(top: BorderSide(color: scheme.outlineVariant)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.10),
+                  blurRadius: 12,
+                  offset: const Offset(0, -4),
+                ),
+              ],
+            ),
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),
+            child: SafeArea(
+              top: false,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      const ProBadge(),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Per-theme breakdown, weakness drill, phase '
+                          'radar with insights, trend tracking.',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  FilledButton.icon(
+                    onPressed: () => PaywallScreen.show(
+                      context,
+                      headline: 'Strengths analysis',
+                      subhead:
+                          'Per-theme Wilson-score breakdown, phase radar, '
+                          'weakness drill, trend tracking. The actionable '
+                          'insight that drives improvement.',
+                    ),
+                    icon: const Icon(Icons.star),
+                    label: const Text('Unlock Pro'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Color-coded horizontal bar that reveals only the accuracy *direction*
+/// without naming the theme. Looks like a loading-screen progress indicator.
+class _LockedBar extends StatelessWidget {
+  const _LockedBar({required this.accuracy, required this.placeholder});
+
+  final double accuracy;
+  // True if there is no real data yet - render with subtle stripes.
+  final bool placeholder;
+
+  Color _accuracyColor(double a) {
+    if (a >= 0.8) return const Color(0xFF2E7D32);
+    if (a >= 0.6) return const Color(0xFFF9A825);
+    return const Color(0xFFC62828);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = _accuracyColor(accuracy);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          // Redacted theme-name placeholder.
+          Container(
+            width: 90,
+            height: 12,
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHigh,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(7),
+              child: LinearProgressIndicator(
+                value: accuracy.clamp(0.05, 0.98),
+                minHeight: 14,
+                backgroundColor: scheme.surfaceContainerHigh,
+                valueColor: AlwaysStoppedAnimation(
+                  color.withValues(alpha: placeholder ? 0.55 : 0.9),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          // Redacted percentage placeholder.
+          Container(
+            width: 36,
+            height: 12,
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHigh,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -9,6 +9,14 @@ class EvalResult {
   final int cp; // from side-to-move perspective; mate scores mapped to ±100000
 }
 
+class StockfishException implements Exception {
+  const StockfishException(this.message);
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 class StockfishService {
   StockfishService();
 
@@ -16,15 +24,26 @@ class StockfishService {
   bool _started = false;
   Future<dynamic> _serial = Future.value();
   bool _strengthLimited = false;
+  Future<void>? _startFuture;
 
-  Future<void> start() async {
-    if (_started) return;
-    if (_engine.state.value == StockfishState.ready) {
+  Future<void> start() {
+    if (_started) return Future.value();
+    return _startFuture ??= _doStart();
+  }
+
+  Future<void> _doStart() async {
+    try {
+      if (_engine.state.value == StockfishState.ready) {
+        _started = true;
+        return;
+      }
+      await _engine.start();
       _started = true;
-      return;
+    } catch (_) {
+      // Reset so a future retry isn't blocked by a cached failure.
+      _startFuture = null;
+      rethrow;
     }
-    await _engine.start();
-    _started = true;
   }
 
   Future<void> setElo(int elo) async {
@@ -131,6 +150,10 @@ class StockfishService {
 
     try {
       return await completer.future.timeout(const Duration(seconds: 30));
+    } on TimeoutException {
+      throw const StockfishException(
+        'Engine timed out while searching for a move.',
+      );
     } finally {
       await sub.cancel();
     }
