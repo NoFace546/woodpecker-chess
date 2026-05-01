@@ -54,7 +54,7 @@ class BackupService {
         );
       }
     } finally {
-      db.dispose();
+      db.close();
     }
   }
 

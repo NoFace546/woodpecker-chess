@@ -422,30 +422,6 @@ class _AnalysisBody extends ConsumerWidget {
   }
 }
 
-class _AnalysisError extends StatelessWidget {
-  const _AnalysisError({required this.onRetry});
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.error_outline, size: 42),
-            const SizedBox(height: 12),
-            const Text('Could not analyze this position.'),
-            const SizedBox(height: 12),
-            FilledButton(onPressed: onRetry, child: const Text('Try again')),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 PlayerSide _playerSide(Side side) {
   return side == Side.white ? PlayerSide.white : PlayerSide.black;
 }

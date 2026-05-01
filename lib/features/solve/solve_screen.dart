@@ -197,7 +197,7 @@ class _EloLogStrip extends StatelessWidget {
         reverse: true,
         padding: const EdgeInsets.symmetric(horizontal: 12),
         itemCount: deltas.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 6),
+        separatorBuilder: (context, index) => const SizedBox(width: 6),
         itemBuilder: (context, i) {
           // Newest on the right; reverse:true makes index 0 = newest.
           final d = deltas[deltas.length - 1 - i];

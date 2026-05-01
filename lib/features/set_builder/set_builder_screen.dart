@@ -8,7 +8,6 @@ import '../../data/repositories/set_repository.dart';
 import '../../data/repositories/user_state_repository.dart';
 import '../../services/pro_status.dart';
 import '../../services/training_recommender.dart';
-import '../../widgets/pro_lock.dart';
 import '../paywall/paywall_screen.dart';
 import '../strengths/widgets/theme_explainer_sheet.dart';
 
@@ -261,6 +260,8 @@ class _SetBuilderScreenState extends ConsumerState<SetBuilderScreen> {
 
   Future<void> _buildRecommended() async {
     if (_creating) return;
+    final router = GoRouter.of(context);
+    final messenger = ScaffoldMessenger.of(context);
     // Gate: free tier gets 1 recommended set ever. Detect by checking for any
     // existing set named "Recommended · …" across active + archived.
     if (!ref.read(isProProvider)) {
@@ -281,7 +282,6 @@ class _SetBuilderScreenState extends ConsumerState<SetBuilderScreen> {
       }
     }
     setState(() => _creating = true);
-    final messenger = ScaffoldMessenger.of(context);
     messenger.showSnackBar(
       const SnackBar(content: Text('Building recommended set…')),
     );
@@ -291,7 +291,7 @@ class _SetBuilderScreenState extends ConsumerState<SetBuilderScreen> {
       ref.invalidate(allSetsProvider);
       if (!mounted) return;
       messenger.hideCurrentSnackBar();
-      context.go('/sets/${result.set.id}');
+      router.go('/sets/${result.set.id}');
     } catch (e) {
       if (!mounted) return;
       messenger.hideCurrentSnackBar();

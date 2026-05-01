@@ -17,7 +17,7 @@ void main() {
       _seedUserData(raw);
       raw.execute('PRAGMA user_version = 7');
     } finally {
-      raw.dispose();
+      raw.close();
     }
 
     final db = AppDatabase(NativeDatabase(file));
