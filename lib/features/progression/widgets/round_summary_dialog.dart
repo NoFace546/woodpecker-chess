@@ -6,12 +6,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../data/models/outlier_attempt.dart';
+import '../../../data/models/global_stats.dart';
 import '../../../data/models/round_comparison.dart';
 import '../../../data/models/round_stats.dart';
 import '../../../data/models/tactical_themes.dart';
 import '../../../data/repositories/round_repository.dart';
-import '../../../widgets/error_view.dart';
+import '../../../data/repositories/stats_repository.dart';
 import '../../../services/app_preferences.dart';
+import '../../../services/review_prompt_service.dart';
+import '../../../widgets/error_view.dart';
 
 class RoundSummaryDialog extends ConsumerStatefulWidget {
   const RoundSummaryDialog({
@@ -122,6 +125,7 @@ class _RoundSummaryDialogState extends ConsumerState<RoundSummaryDialog> {
     final compAsync =
         ref.watch(roundComparisonProvider(widget.roundId));
     final allRoundsAsync = ref.watch(setRoundsStatsProvider(widget.setId));
+    final globalStatsAsync = ref.watch(globalStatsProvider);
     final outliersAsync = ref.watch(
       outliersProvider((roundId: widget.roundId, limit: 3)),
     );
@@ -152,6 +156,7 @@ class _RoundSummaryDialogState extends ConsumerState<RoundSummaryDialog> {
                       allRoundsAsync.maybeWhen(data: (r) => r, orElse: () => const <RoundStats>[]);
                   return _Body(
                     comparison: comparison,
+                    globalStatsAsync: globalStatsAsync,
                     outliersAsync: outliersAsync,
                     mastery: _checkMastery(comparison, allRounds),
                   );
@@ -186,11 +191,13 @@ class _RoundSummaryDialogState extends ConsumerState<RoundSummaryDialog> {
 class _Body extends StatelessWidget {
   const _Body({
     required this.comparison,
+    required this.globalStatsAsync,
     required this.outliersAsync,
     required this.mastery,
   });
 
   final RoundComparison comparison;
+  final AsyncValue<GlobalStats> globalStatsAsync;
   final AsyncValue<List<OutlierAttempt>> outliersAsync;
   final _Mastery mastery;
 
@@ -283,6 +290,14 @@ class _Body extends StatelessWidget {
             ),
           ),
         ],
+        globalStatsAsync.when(
+          loading: () => const SizedBox.shrink(),
+          error: (_, _) => const SizedBox.shrink(),
+          data: (globalStats) => _ReviewPromptCard(
+            comparison: comparison,
+            globalStats: globalStats,
+          ),
+        ),
         const Divider(height: 24),
         Text(
           'Hardest puzzles',
@@ -335,6 +350,135 @@ class _Body extends StatelessWidget {
           },
         ),
       ],
+    );
+  }
+}
+
+class _ReviewPromptCard extends ConsumerStatefulWidget {
+  const _ReviewPromptCard({
+    required this.comparison,
+    required this.globalStats,
+  });
+
+  final RoundComparison comparison;
+  final GlobalStats globalStats;
+
+  @override
+  ConsumerState<_ReviewPromptCard> createState() => _ReviewPromptCardState();
+}
+
+class _ReviewPromptCardState extends ConsumerState<_ReviewPromptCard> {
+  late Future<bool> _visibleFuture;
+  bool _hidden = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _visibleFuture = _shouldShow();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ReviewPromptCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.comparison.current.roundNumber !=
+            widget.comparison.current.roundNumber ||
+        oldWidget.globalStats.totalAttempts != widget.globalStats.totalAttempts) {
+      _visibleFuture = _shouldShow();
+    }
+  }
+
+  Future<bool> _shouldShow() {
+    return ref.read(reviewPromptServiceProvider).shouldPromptAfterRound(
+          comparison: widget.comparison,
+          globalStats: widget.globalStats,
+        );
+  }
+
+  Future<void> _openReview() async {
+    final service = ref.read(reviewPromptServiceProvider);
+    final opened = await service.openStoreListing();
+    if (!mounted) return;
+    if (opened) {
+      await service.markCompleted();
+      if (!mounted) return;
+      setState(() => _hidden = true);
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Could not open the store right now.')),
+    );
+  }
+
+  Future<void> _notNow() async {
+    await ref.read(reviewPromptServiceProvider).markNotNow();
+    if (mounted) setState(() => _hidden = true);
+  }
+
+  Future<void> _neverAsk() async {
+    await ref.read(reviewPromptServiceProvider).markNeverAsk();
+    if (mounted) setState(() => _hidden = true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_hidden) return const SizedBox.shrink();
+    return FutureBuilder<bool>(
+      future: _visibleFuture,
+      builder: (context, snapshot) {
+        if (snapshot.data != true) return const SizedBox.shrink();
+        final colorScheme = Theme.of(context).colorScheme;
+        return Padding(
+          padding: const EdgeInsets.only(top: 20),
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: colorScheme.secondaryContainer,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.favorite_border, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Enjoying Woodpecker?',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'A quick review helps other chess players find it.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
+                    FilledButton(
+                      onPressed: _openReview,
+                      child: const Text('Review'),
+                    ),
+                    TextButton(
+                      onPressed: _notNow,
+                      child: const Text('Not now'),
+                    ),
+                    TextButton(
+                      onPressed: _neverAsk,
+                      child: const Text('No thanks'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

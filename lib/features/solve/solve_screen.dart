@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../data/repositories/puzzle_repository.dart';
 import '../../data/repositories/round_repository.dart';
 import '../../data/repositories/stats_repository.dart';
 import '../../data/repositories/user_state_repository.dart';
 import '../../services/app_preferences.dart';
+import '../../services/puzzle_report_service.dart';
+import 'analysis_sheet.dart';
 import 'solve_board_controller.dart';
 import 'solve_board_widget.dart';
 import 'solve_state.dart';
@@ -60,6 +63,10 @@ class _SolveScreenState extends ConsumerState<SolveScreen> {
             icon: const Icon(Icons.skip_next),
             tooltip: 'Next puzzle',
             onPressed: () => ref.invalidate(eloRandomPuzzleProvider),
+          ),
+          puzzleAsync.maybeWhen(
+            data: (puzzle) => _PuzzleActionsMenu(puzzle: puzzle),
+            orElse: () => _PuzzleActionsMenu(),
           ),
         ],
       ),
@@ -136,6 +143,11 @@ class _SolveScreenState extends ConsumerState<SolveScreen> {
               eloLog: _eloLog,
               onTryAgain: controller.resetForRetry,
               onNext: () => ref.invalidate(eloRandomPuzzleProvider),
+              onAnalyze: () => AnalysisSheet.show(
+                context,
+                puzzle: state.puzzle,
+                startPosition: state.position,
+              ),
             ),
           ),
         ),
@@ -233,6 +245,7 @@ class _RandomStatusBar extends ConsumerWidget {
     required this.eloLog,
     required this.onTryAgain,
     required this.onNext,
+    required this.onAnalyze,
   });
 
   final SolveState state;
@@ -240,6 +253,7 @@ class _RandomStatusBar extends ConsumerWidget {
   final List<EloDelta> eloLog;
   final VoidCallback onTryAgain;
   final VoidCallback onNext;
+  final VoidCallback onAnalyze;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -295,27 +309,34 @@ class _RandomStatusBar extends ConsumerWidget {
               if (hintsEnabled &&
                   state.status == SolveStatus.playing &&
                   state.hintFromSquare == null)
-                IconButton(
+                _BarIconButton(
                   onPressed: controller.requestHint,
-                  icon: const Icon(Icons.lightbulb_outline),
+                  icon: Icons.lightbulb_outline,
                   tooltip: 'Hint',
                 ),
               if (canShowSolution(state.status))
-                IconButton(
+                _BarIconButton(
                   onPressed: controller.revealSolution,
-                  icon: const Icon(Icons.visibility_outlined),
+                  icon: Icons.visibility_outlined,
                   tooltip: 'Show solution',
                 ),
               if (canAdvance) ...[
-                OutlinedButton.icon(
-                  onPressed: onTryAgain,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Try again'),
+                _BarIconButton(
+                  onPressed: onAnalyze,
+                  icon: Icons.search,
+                  tooltip: 'Analyze',
+                  filled: true,
                 ),
-                FilledButton.icon(
+                _BarIconButton(
+                  onPressed: onTryAgain,
+                  icon: Icons.refresh,
+                  tooltip: 'Try again',
+                ),
+                _BarIconButton(
                   onPressed: onNext,
-                  icon: const Icon(Icons.skip_next),
-                  label: const Text('Next'),
+                  icon: Icons.skip_next,
+                  tooltip: 'Next',
+                  filled: true,
                 ),
               ],
             ],
@@ -325,6 +346,78 @@ class _RandomStatusBar extends ConsumerWidget {
       ),
         ),
       ],
+    );
+  }
+}
+
+class _PuzzleActionsMenu extends StatelessWidget {
+  const _PuzzleActionsMenu({this.puzzle});
+
+  final dynamic puzzle;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      tooltip: 'More',
+      icon: const Icon(Icons.more_horiz),
+      onSelected: (value) {
+        switch (value) {
+          case 'settings':
+            context.push('/settings');
+            break;
+          case 'report':
+            final p = puzzle;
+            if (p != null) reportPuzzle(context, p);
+            break;
+        }
+      },
+      itemBuilder: (context) => [
+        const PopupMenuItem(
+          value: 'settings',
+          child: ListTile(
+            leading: Icon(Icons.settings_outlined),
+            title: Text('Settings'),
+          ),
+        ),
+        if (puzzle != null)
+          const PopupMenuItem(
+            value: 'report',
+            child: ListTile(
+              leading: Icon(Icons.flag_outlined),
+              title: Text('Report puzzle'),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _BarIconButton extends StatelessWidget {
+  const _BarIconButton({
+    required this.onPressed,
+    required this.icon,
+    required this.tooltip,
+    this.filled = false,
+  });
+
+  final VoidCallback onPressed;
+  final IconData icon;
+  final String tooltip;
+  final bool filled;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return IconButton(
+      onPressed: onPressed,
+      icon: Icon(icon),
+      iconSize: 30,
+      tooltip: tooltip,
+      style: IconButton.styleFrom(
+        backgroundColor: filled ? scheme.primary : scheme.surfaceContainerHigh,
+        foregroundColor: filled ? scheme.onPrimary : scheme.onSurface,
+        minimumSize: const Size.square(48),
+      ),
     );
   }
 }

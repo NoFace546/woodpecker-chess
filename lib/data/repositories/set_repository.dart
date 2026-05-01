@@ -128,9 +128,16 @@ class SetRepository {
     required List<String> ids,
     String? name,
   }) async {
+    final filteredIds = await _filterDisabledIds(ids);
     final id = _uuid.v4();
     final now = DateTime.now();
     final setName = name ?? _autoName(filter, now);
+    final resultFilter = SetFilter(
+      ratingMin: filter.ratingMin,
+      ratingMax: filter.ratingMax,
+      themes: filter.themes,
+      size: filteredIds.length,
+    );
 
     await _db.transaction(() async {
       await _db.into(_db.puzzleSets).insert(
@@ -138,20 +145,20 @@ class SetRepository {
               id: id,
               name: setName,
               createdAt: now,
-              ratingMin: Value(filter.ratingMin),
-              ratingMax: Value(filter.ratingMax),
-              themesJson: Value(filter.themesJson),
-              size: ids.length,
+              ratingMin: Value(resultFilter.ratingMin),
+              ratingMax: Value(resultFilter.ratingMax),
+              themesJson: Value(resultFilter.themesJson),
+              size: filteredIds.length,
             ),
           );
       await _db.batch((b) {
-        for (var i = 0; i < ids.length; i++) {
+        for (var i = 0; i < filteredIds.length; i++) {
           b.insert(
             _db.puzzleSetItems,
             PuzzleSetItemsCompanion.insert(
               setId: id,
               position: i,
-              puzzleId: ids[i],
+              puzzleId: filteredIds[i],
             ),
           );
         }
@@ -162,8 +169,8 @@ class SetRepository {
       id: id,
       name: setName,
       createdAt: now,
-      filter: filter,
-      puzzleIds: ids,
+      filter: resultFilter,
+      puzzleIds: filteredIds,
     );
   }
 
@@ -214,8 +221,10 @@ class SetRepository {
         ? ' AND id IN (SELECT puzzle_id FROM puzzle_themes WHERE theme IN (${filter.themes.map((_) => '?').join(',')}))'
         : '';
     final limitClause = withLimit ? ' ORDER BY RANDOM() LIMIT ?' : '';
+    const disabledClause =
+        ' AND NOT EXISTS (SELECT 1 FROM disabled_puzzles dp WHERE dp.puzzle_id = puzzles.id)';
     final sql =
-        '$selectClause WHERE rating BETWEEN ? AND ?$themeClause$limitClause';
+        '$selectClause WHERE rating BETWEEN ? AND ?$themeClause$disabledClause$limitClause';
     final vars = <Variable<Object>>[
       Variable.withInt(filter.ratingMin),
       Variable.withInt(filter.ratingMax),
@@ -223,6 +232,18 @@ class SetRepository {
       if (withLimit) Variable.withInt(filter.size),
     ];
     return (sql, vars);
+  }
+
+  Future<List<String>> _filterDisabledIds(List<String> ids) async {
+    if (ids.isEmpty) return ids;
+    final placeholders = ids.map((_) => '?').join(',');
+    final rows = await _db.customSelect(
+      'SELECT puzzle_id FROM disabled_puzzles WHERE puzzle_id IN ($placeholders)',
+      variables: ids.map(Variable.withString).toList(),
+    ).get();
+    final disabled = rows.map((r) => r.read<String>('puzzle_id')).toSet();
+    if (disabled.isEmpty) return ids;
+    return ids.where((id) => !disabled.contains(id)).toList();
   }
 
   static String _autoName(SetFilter filter, DateTime when) {

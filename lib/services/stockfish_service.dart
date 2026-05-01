@@ -9,6 +9,18 @@ class EvalResult {
   final int cp; // from side-to-move perspective; mate scores mapped to ±100000
 }
 
+class AnalysisLine {
+  const AnalysisLine({
+    required this.depth,
+    required this.cp,
+    required this.pv,
+  });
+
+  final int depth;
+  final int cp;
+  final List<String> pv;
+}
+
 class StockfishException implements Exception {
   const StockfishException(this.message);
   final String message;
@@ -81,6 +93,13 @@ class StockfishService {
     return _serialize(() => _runGo(fen: fen, depth: depth));
   }
 
+  Future<AnalysisLine> analyzeLine({
+    required String fen,
+    int movetimeMs = 350,
+  }) {
+    return _serialize(() => _runAnalysis(fen: fen, movetimeMs: movetimeMs));
+  }
+
   Future<int> evaluateAfterMove({
     required String fen,
     required String moveUci,
@@ -149,10 +168,83 @@ class StockfishService {
     _engine.stdin = 'go depth $depth';
 
     try {
-      return await completer.future.timeout(const Duration(seconds: 30));
+      return await completer.future.timeout(const Duration(seconds: 12));
     } on TimeoutException {
+      await _recoverEngine();
       throw const StockfishException(
         'Engine timed out while searching for a move.',
+      );
+    } finally {
+      await sub.cancel();
+    }
+  }
+
+  Future<AnalysisLine> _runAnalysis({
+    required String fen,
+    required int movetimeMs,
+  }) async {
+    await start();
+    if (_strengthLimited) {
+      _engine.stdin = 'setoption name UCI_LimitStrength value false';
+      _strengthLimited = false;
+    }
+    _engine.stdin = 'setoption name Skill Level value 20';
+
+    final completer = Completer<AnalysisLine>();
+    int lastDepth = 0;
+    int? lastCp;
+    int? lastMate;
+    List<String> lastPv = const [];
+
+    final depthRegex = RegExp(r'\bdepth\s+(\d+)');
+    final cpRegex = RegExp(r'score cp (-?\d+)');
+    final mateRegex = RegExp(r'score mate (-?\d+)');
+    final pvRegex = RegExp(r'\bpv\s+(.+)$');
+    final bestRegex = RegExp(r'^bestmove\s+(\S+)');
+
+    final sub = _engine.stdout.listen((line) {
+      final depthMatch = depthRegex.firstMatch(line);
+      if (depthMatch != null) {
+        lastDepth = int.parse(depthMatch.group(1)!);
+      }
+      final cpMatch = cpRegex.firstMatch(line);
+      if (cpMatch != null) {
+        lastCp = int.parse(cpMatch.group(1)!);
+        lastMate = null;
+      }
+      final mateMatch = mateRegex.firstMatch(line);
+      if (mateMatch != null) {
+        lastMate = int.parse(mateMatch.group(1)!);
+        lastCp = null;
+      }
+      final pvMatch = pvRegex.firstMatch(line);
+      if (pvMatch != null) {
+        lastPv = pvMatch
+            .group(1)!
+            .split(RegExp(r'\s+'))
+            .where((m) => m.isNotEmpty)
+            .toList();
+      }
+      final bestMatch = bestRegex.firstMatch(line);
+      if (bestMatch != null && !completer.isCompleted) {
+        final best = bestMatch.group(1)!;
+        final cp = lastMate != null
+            ? (lastMate! > 0 ? 100000 - lastMate! : -100000 - lastMate!)
+            : (lastCp ?? 0);
+        final pv = lastPv.isEmpty && best != '(none)' ? [best] : lastPv;
+        completer.complete(AnalysisLine(depth: lastDepth, cp: cp, pv: pv));
+      }
+    });
+
+    _engine.stdin = 'position fen $fen';
+    _engine.stdin = 'go movetime $movetimeMs';
+
+    try {
+      return await completer.future.timeout(const Duration(seconds: 5));
+    } on TimeoutException {
+      await _recoverEngine();
+      throw const StockfishException(
+        'Engine timed out while analyzing this position.',
       );
     } finally {
       await sub.cancel();
@@ -169,6 +261,19 @@ class StockfishService {
       }
     });
     return completer.future;
+  }
+
+  Future<void> _recoverEngine() async {
+    try {
+      _engine.stdin = 'stop';
+      await _engine.quit();
+    } catch (_) {
+      // Best-effort recovery; the next call will try to start again.
+    } finally {
+      _started = false;
+      _strengthLimited = false;
+      _startFuture = null;
+    }
   }
 
   Future<void> dispose() async {

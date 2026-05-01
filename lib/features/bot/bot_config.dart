@@ -1,16 +1,16 @@
 import 'package:dartchess/dartchess.dart';
 
 // Stockfish's UCI_Elo only goes down to 1320. For weaker play we fall back to
-// Skill Level (0–20) with low depth - much rougher Elo mapping, but it lets
-// the engine actually play at sub-1300 strength.
+// Skill Level (0-20) with low depth. Play levels should feel beatable and
+// human, not like analysis mode, so even stronger bots use modest depth caps.
 enum BotLevel {
   newcomer(label: 'Newcomer', skillLevel: 0, depth: 1),
   beginner(label: 'Beginner', skillLevel: 3, depth: 3),
   novice(label: 'Novice', skillLevel: 8, depth: 5),
-  casual(label: 'Casual', elo: 1320, depth: 8),
-  intermediate(label: 'Intermediate', elo: 1700, depth: 12),
-  advanced(label: 'Advanced', elo: 2100, depth: 16),
-  expert(label: 'Expert', elo: 2400, depth: 20);
+  casual(label: 'Casual', elo: 1320, depth: 4),
+  intermediate(label: 'Intermediate', elo: 1500, depth: 6),
+  advanced(label: 'Advanced', elo: 1700, depth: 8),
+  expert(label: 'Expert', elo: 1900, depth: 10);
 
   const BotLevel({
     required this.label,
@@ -25,8 +25,8 @@ enum BotLevel {
   final int? skillLevel;
 
   String get description {
-    if (elo != null) return 'Elo $elo • depth $depth';
-    return 'Skill ${skillLevel ?? 0} • depth $depth';
+    if (elo != null) return 'Elo $elo - depth $depth';
+    return 'Skill ${skillLevel ?? 0} - depth $depth';
   }
 }
 

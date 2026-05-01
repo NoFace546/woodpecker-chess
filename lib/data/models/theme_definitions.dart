@@ -158,6 +158,31 @@ const Map<String, String> kThemeDefinitions = {
   // Defensive
   'defensiveMove':
       'A precise move that prevents material loss instead of attacking.',
+
+  // Generic mate / phase / length tags also surface in the UI and benefit
+  // from a one-liner so the explainer sheet never falls back to "no
+  // description".
+  'mate':
+      'The puzzle ends in checkmate. Calculate the forced mating sequence '
+          'rather than just winning material.',
+  'opening':
+      'A position from the opening phase (typically the first 10-15 moves). '
+          'Tactics here often punish concrete development mistakes.',
+  'middlegame':
+      'A middlegame position, after both sides have developed and the centre '
+          'or kingside attacks become possible.',
+  'endgame':
+      'An endgame position with reduced material. Solutions often involve '
+          'piece coordination and king activity rather than raw tactics.',
+  'short':
+      'A short puzzle (typically two-move solution). Quick pattern '
+          'recognition matters more than deep calculation.',
+  'long':
+      'A longer puzzle with several moves to play. Calculation depth and '
+          'visualisation skill are tested.',
+  'attackingPin':
+      'A pin that not only restricts the pinned piece but also threatens to '
+          'win material on the pinning line.',
 };
 
 String? definitionFor(String theme) => kThemeDefinitions[theme];

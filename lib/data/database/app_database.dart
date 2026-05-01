@@ -143,7 +143,7 @@ class AppDatabase extends _$AppDatabase {
   factory AppDatabase.inMemory() => AppDatabase(NativeDatabase.memory());
 
   @override
-  int get schemaVersion => 7;
+  int get schemaVersion => 8;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -160,6 +160,7 @@ class AppDatabase extends _$AppDatabase {
           await m.createAll();
           await _seedUserState();
           await _seedRandomPlay();
+          await _createPuzzleOverrideTables();
           await _createPerfIndexes();
         },
         onUpgrade: (m, from, to) async {
@@ -188,6 +189,9 @@ class AppDatabase extends _$AppDatabase {
           }
           if (from < 7) {
             await _createPerfIndexes();
+          }
+          if (from < 8) {
+            await _createPuzzleOverrideTables();
           }
         },
       );
@@ -222,6 +226,16 @@ class AppDatabase extends _$AppDatabase {
       'CREATE INDEX IF NOT EXISTS idx_puzzle_sets_archived_at '
       'ON puzzle_sets(archived_at)',
     );
+  }
+
+  Future<void> _createPuzzleOverrideTables() async {
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS disabled_puzzles (
+        puzzle_id TEXT PRIMARY KEY,
+        reason TEXT,
+        disabled_at INTEGER NOT NULL
+      )
+    ''');
   }
 
   Future<void> _ensurePuzzleSetsColumns() async {

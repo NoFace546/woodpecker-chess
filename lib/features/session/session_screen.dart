@@ -9,7 +9,9 @@ import '../../data/repositories/round_repository.dart';
 import '../../data/repositories/set_repository.dart';
 import '../../data/repositories/stats_repository.dart';
 import '../../services/app_preferences.dart';
+import '../../services/puzzle_report_service.dart';
 import '../progression/widgets/round_summary_dialog.dart';
+import '../solve/analysis_sheet.dart';
 import '../solve/puzzle.dart';
 import '../solve/solve_board_controller.dart';
 import '../solve/solve_board_widget.dart';
@@ -76,6 +78,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen> {
       if (position != round.currentPosition) {
         await roundRepo.advancePosition(round.id, position);
         ref.invalidate(roundsForSetProvider(widget.setId));
+        ref.invalidate(recentSetActivityProvider);
       }
       Puzzle? puzzle;
       if (position < orderedIds.length) {
@@ -133,6 +136,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen> {
     final newPosition = _position + 1;
     await roundRepo.advancePosition(_round!.id, newPosition);
     ref.invalidate(roundsForSetProvider(_set!.id));
+    ref.invalidate(recentSetActivityProvider);
     // Refresh global stats so Strengths / phase radar / Elo history pick
     // up the attempt without an app restart.
     ref.invalidate(globalStatsProvider);
@@ -180,6 +184,8 @@ class _SessionScreenState extends ConsumerState<SessionScreen> {
 
     if (newPosition >= _orderedIds.length) {
       await roundRepo.complete(_round!.id);
+      ref.invalidate(roundsForSetProvider(_set!.id));
+      ref.invalidate(recentSetActivityProvider);
       ref.invalidate(setRoundsStatsProvider(_set!.id));
       ref.invalidate(themeStatsProvider(_set!.id));
       ref.invalidate(problemPuzzlesProvider(_set!.id));
@@ -237,6 +243,9 @@ class _SessionScreenState extends ConsumerState<SessionScreen> {
           tooltip: 'Pause',
           onPressed: () => context.go('/sets/${widget.setId}'),
         ),
+        actions: [
+          _SessionPuzzleActionsMenu(puzzle: _puzzle),
+        ],
       ),
       body: SafeArea(child: _buildBody(context)),
     );
@@ -270,6 +279,11 @@ class _SessionScreenState extends ConsumerState<SessionScreen> {
             position: _position,
             total: _set?.size ?? 0,
             onContinue: _advance,
+            onAnalyze: () => AnalysisSheet.show(
+              context,
+              puzzle: state.puzzle,
+              startPosition: state.position,
+            ),
           ),
         ],
       ),
@@ -406,6 +420,7 @@ class _SessionStatusBar extends ConsumerWidget {
     required this.position,
     required this.total,
     required this.onContinue,
+    required this.onAnalyze,
   });
 
   final SolveState state;
@@ -413,6 +428,7 @@ class _SessionStatusBar extends ConsumerWidget {
   final int position;
   final int total;
   final VoidCallback onContinue;
+  final VoidCallback onAnalyze;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -465,33 +481,113 @@ class _SessionStatusBar extends ConsumerWidget {
               if (hintsEnabled &&
                   state.status == SolveStatus.playing &&
                   state.hintFromSquare == null)
-                IconButton(
+                _BarIconButton(
                   onPressed: controller.requestHint,
-                  icon: const Icon(Icons.lightbulb_outline),
+                  icon: Icons.lightbulb_outline,
                   tooltip: 'Hint',
                 ),
               if (canShowSolution(state.status))
-                IconButton(
+                _BarIconButton(
                   onPressed: controller.revealSolution,
-                  icon: const Icon(Icons.visibility_outlined),
+                  icon: Icons.visibility_outlined,
                   tooltip: 'Show solution',
                 ),
               if (canRetry)
-                OutlinedButton.icon(
+                _BarIconButton(
                   onPressed: controller.resetForRetry,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Try again'),
+                  icon: Icons.refresh,
+                  tooltip: 'Try again',
                 ),
-              if (canContinue)
-                FilledButton.icon(
+              if (canContinue) ...[
+                _BarIconButton(
+                  onPressed: onAnalyze,
+                  icon: Icons.search,
+                  tooltip: 'Analyze',
+                  filled: true,
+                ),
+                _BarIconButton(
                   onPressed: onContinue,
-                  icon: Icon(isLast ? Icons.flag : Icons.skip_next),
-                  label: Text(isLast ? 'Finish round' : 'Next'),
+                  icon: isLast ? Icons.flag : Icons.skip_next,
+                  tooltip: isLast ? 'Finish round' : 'Next',
+                  filled: true,
                 ),
+              ],
             ],
           ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _SessionPuzzleActionsMenu extends StatelessWidget {
+  const _SessionPuzzleActionsMenu({required this.puzzle});
+
+  final Puzzle? puzzle;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      tooltip: 'More',
+      icon: const Icon(Icons.more_horiz),
+      onSelected: (value) {
+        switch (value) {
+          case 'settings':
+            context.push('/settings');
+            break;
+          case 'report':
+            final p = puzzle;
+            if (p != null) reportPuzzle(context, p);
+            break;
+        }
+      },
+      itemBuilder: (context) => [
+        const PopupMenuItem(
+          value: 'settings',
+          child: ListTile(
+            leading: Icon(Icons.settings_outlined),
+            title: Text('Settings'),
+          ),
+        ),
+        if (puzzle != null)
+          const PopupMenuItem(
+            value: 'report',
+            child: ListTile(
+              leading: Icon(Icons.flag_outlined),
+              title: Text('Report puzzle'),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _BarIconButton extends StatelessWidget {
+  const _BarIconButton({
+    required this.onPressed,
+    required this.icon,
+    required this.tooltip,
+    this.filled = false,
+  });
+
+  final VoidCallback onPressed;
+  final IconData icon;
+  final String tooltip;
+  final bool filled;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return IconButton(
+      onPressed: onPressed,
+      icon: Icon(icon),
+      iconSize: 30,
+      tooltip: tooltip,
+      style: IconButton.styleFrom(
+        backgroundColor: filled ? scheme.primary : scheme.surfaceContainerHigh,
+        foregroundColor: filled ? scheme.onPrimary : scheme.onSurface,
+        minimumSize: const Size.square(48),
       ),
     );
   }

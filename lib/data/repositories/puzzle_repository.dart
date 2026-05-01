@@ -9,10 +9,12 @@ class PuzzleRepository {
   PuzzleRepository(this._db);
 
   final AppDatabase _db;
+  static const availablePuzzleClause =
+      'NOT EXISTS (SELECT 1 FROM disabled_puzzles dp WHERE dp.puzzle_id = puzzles.id)';
 
   Future<int> count() async {
     final row = await _db
-        .customSelect('SELECT COUNT(*) AS c FROM puzzles')
+        .customSelect('SELECT COUNT(*) AS c FROM puzzles WHERE $availablePuzzleClause')
         .getSingle();
     return row.read<int>('c');
   }
@@ -27,7 +29,8 @@ class PuzzleRepository {
   Future<Puzzle?> randomPuzzle() async {
     final row = await _db
         .customSelect(
-          'SELECT * FROM puzzles ORDER BY RANDOM() LIMIT 1',
+          'SELECT * FROM puzzles WHERE $availablePuzzleClause '
+          'ORDER BY RANDOM() LIMIT 1',
           readsFrom: {_db.puzzles},
         )
         .getSingleOrNull();
@@ -42,6 +45,7 @@ class PuzzleRepository {
   }) async {
     final row = await _db.customSelect(
       'SELECT id FROM puzzles WHERE rating BETWEEN ? AND ? '
+      'AND $availablePuzzleClause '
       'ORDER BY RANDOM() LIMIT 1',
       variables: [Variable.withInt(min), Variable.withInt(max)],
       readsFrom: {_db.puzzles},
@@ -53,17 +57,34 @@ class PuzzleRepository {
   /// Returns a popular, low-rated puzzle that has the given theme. Used as
   /// an example in the theme-explainer sheet.
   Future<Puzzle?> exampleForTheme(String theme) async {
-    final row = await _db.customSelect(
-      '''
-      SELECT p.id FROM puzzles p
-      JOIN puzzle_themes pt ON pt.puzzle_id = p.id
-      WHERE pt.theme = ? AND p.rating BETWEEN 800 AND 1500
-      ORDER BY p.popularity DESC, p.rating ASC
-      LIMIT 1
-      ''',
-      variables: [Variable.withString(theme)],
-      readsFrom: {_db.puzzles, _db.puzzleThemes},
-    ).getSingleOrNull();
+    // Try the comfort window first so common themes get an approachable
+    // example. If nothing matches (e.g. underPromotion / smotheredMate are
+    // typically high-rated), widen to the full library and rank by
+    // popularity so we still surface a clean illustrative puzzle.
+    Future<dynamic> query(int minR, int maxR) {
+      return _db.customSelect(
+        '''
+        SELECT p.id FROM puzzles p
+        JOIN puzzle_themes pt ON pt.puzzle_id = p.id
+        WHERE pt.theme = ? AND p.rating BETWEEN ? AND ?
+          AND NOT EXISTS (
+            SELECT 1 FROM disabled_puzzles dp WHERE dp.puzzle_id = p.id
+          )
+        ORDER BY p.popularity DESC, p.rating ASC
+        LIMIT 1
+        ''',
+        variables: [
+          Variable.withString(theme),
+          Variable.withInt(minR),
+          Variable.withInt(maxR),
+        ],
+        readsFrom: {_db.puzzles, _db.puzzleThemes},
+      ).getSingleOrNull();
+    }
+
+    var row = await query(800, 1500);
+    row ??= await query(1500, 2200);
+    row ??= await query(0, 3500);
     if (row == null) return null;
     return getById(row.read<String>('id'));
   }
@@ -76,6 +97,24 @@ class PuzzleRepository {
         )
         .get();
     return rows.map((r) => r.read<String>('theme')).toList();
+  }
+
+  Future<bool> isDisabled(String puzzleId) async {
+    final row = await _db.customSelect(
+      'SELECT 1 FROM disabled_puzzles WHERE puzzle_id = ? LIMIT 1',
+      variables: [Variable.withString(puzzleId)],
+    ).getSingleOrNull();
+    return row != null;
+  }
+
+  Future<void> disablePuzzle(String puzzleId, {String? reason}) async {
+    await _db.customStatement(
+      '''
+      INSERT OR REPLACE INTO disabled_puzzles (puzzle_id, reason, disabled_at)
+      VALUES (?, ?, ?)
+      ''',
+      [puzzleId, reason, DateTime.now().millisecondsSinceEpoch],
+    );
   }
 
   /// Inserts a single verified Lichess puzzle so the app has something to

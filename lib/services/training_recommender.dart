@@ -289,8 +289,10 @@ class TrainingRecommender {
     final excludeClause = hasExclude
         ? ' AND id NOT IN (${exclude.map((_) => '?').join(',')})'
         : '';
+    const disabledClause =
+        ' AND NOT EXISTS (SELECT 1 FROM disabled_puzzles dp WHERE dp.puzzle_id = puzzles.id)';
     final sql =
-        'SELECT id FROM puzzles WHERE rating BETWEEN ? AND ?$themeClause$excludeClause '
+        'SELECT id FROM puzzles WHERE rating BETWEEN ? AND ?$themeClause$excludeClause$disabledClause '
         'ORDER BY RANDOM() LIMIT ?';
     final vars = <Variable<Object>>[
       Variable.withInt(ratingMin),
