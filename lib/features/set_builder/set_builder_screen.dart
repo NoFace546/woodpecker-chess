@@ -33,6 +33,25 @@ const _commonThemes = [
 
 const _sizeOptions = [50, 100, 250, 500, 1000];
 
+const _recommendedSizeOptions = [
+  _RecommendedSizeOption(
+    size: 50,
+    label: 'Focused',
+    subtitle: 'Shorter drill. Faster to repeat, but easier to memorize.',
+  ),
+  _RecommendedSizeOption(
+    size: 150,
+    label: 'Recommended',
+    subtitle: 'Best balance for learning patterns instead of single answers.',
+    recommended: true,
+  ),
+  _RecommendedSizeOption(
+    size: 300,
+    label: 'Deep',
+    subtitle: 'More coverage for a longer training cycle.',
+  ),
+];
+
 // Themes from kThemeDefinitions that aren't already in the common list.
 final List<String> _allOtherThemes = () {
   final common = _commonThemes.toSet();
@@ -258,10 +277,64 @@ class _SetBuilderScreenState extends ConsumerState<SetBuilderScreen> {
     );
   }
 
+  Future<int?> _pickRecommendedSize() {
+    var selected = 150;
+    return showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setModalState) => SafeArea(
+            child: SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Build recommended set',
+                      style: Theme.of(ctx).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Smaller sets are faster. Larger sets reduce '
+                      'memorization and teach the theme more reliably.',
+                      style: Theme.of(ctx).textTheme.bodyMedium?.copyWith(
+                            color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                          ),
+                    ),
+                    const SizedBox(height: 12),
+                    for (final option in _recommendedSizeOptions)
+                      _RecommendedSizeTile(
+                        option: option,
+                        selected: selected == option.size,
+                        onTap: () {
+                          setModalState(() => selected = option.size);
+                        },
+                      ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: () => Navigator.pop(ctx, selected),
+                        icon: const Icon(Icons.fitness_center),
+                        label: const Text('Build set'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _buildRecommended() async {
     if (_creating) return;
-    final router = GoRouter.of(context);
-    final messenger = ScaffoldMessenger.of(context);
     // Gate: free tier gets 1 recommended set ever. Detect by checking for any
     // existing set named "Recommended · …" across active + archived.
     if (!ref.read(isProProvider)) {
@@ -281,13 +354,19 @@ class _SetBuilderScreenState extends ConsumerState<SetBuilderScreen> {
         return;
       }
     }
+    final targetSize = await _pickRecommendedSize();
+    if (targetSize == null || !mounted) return;
+    final router = GoRouter.of(context);
+    final messenger = ScaffoldMessenger.of(context);
     setState(() => _creating = true);
     messenger.showSnackBar(
       const SnackBar(content: Text('Building recommended set…')),
     );
     try {
       final result =
-          await ref.read(trainingRecommenderProvider).buildRecommended();
+          await ref
+              .read(trainingRecommenderProvider)
+              .buildRecommended(targetSize: targetSize);
       ref.invalidate(allSetsProvider);
       if (!mounted) return;
       messenger.hideCurrentSnackBar();
@@ -506,6 +585,120 @@ class _SetBuilderScreenState extends ConsumerState<SetBuilderScreen> {
             label: const Text('Create set'),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _RecommendedSizeOption {
+  const _RecommendedSizeOption({
+    required this.size,
+    required this.label,
+    required this.subtitle,
+    this.recommended = false,
+  });
+
+  final int size;
+  final String label;
+  final String subtitle;
+  final bool recommended;
+}
+
+class _RecommendedSizeTile extends StatelessWidget {
+  const _RecommendedSizeTile({
+    required this.option,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final _RecommendedSizeOption option;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: selected
+            ? scheme.primaryContainer
+            : scheme.surfaceContainerHighest,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: BorderSide(
+            color: selected ? scheme.primary : scheme.outlineVariant,
+          ),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                Icon(
+                  selected
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
+                  color: selected ? scheme.primary : scheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              '${option.label} - ${option.size} puzzles',
+                              style: Theme.of(context).textTheme.titleSmall,
+                            ),
+                          ),
+                          if (option.recommended) ...[
+                            const SizedBox(width: 8),
+                            const _RecommendedBadge(),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        option.subtitle,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                            ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RecommendedBadge extends StatelessWidget {
+  const _RecommendedBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: scheme.primary,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        'Best',
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: scheme.onPrimary,
+              fontWeight: FontWeight.w700,
+            ),
       ),
     );
   }
