@@ -78,6 +78,7 @@ flutter:
 
   assets:
     - assets/db/puzzles.sqlite
+    - assets/config/disabled_puzzles.json
     - assets/sounds/
 
   # An image asset can refer to one or more resolution-specific "variants", see

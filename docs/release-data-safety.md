@@ -36,3 +36,18 @@ For puzzle removals, do not delete puzzle rows from user databases. Mark puzzle
 ids in `disabled_puzzles` and filter them out of future random, custom, and
 recommended selection. Existing attempts and historical stats should remain
 readable.
+
+Bundled removals live in `assets/config/disabled_puzzles.json`. Keep the file
+valid JSON and add entries like:
+
+```json
+{
+  "version": 1,
+  "disabled": [
+    { "id": "abc123", "reason": "invalid solution line" }
+  ]
+}
+```
+
+The app applies this list during puzzle bootstrap. Shipping an app update with
+new ids hides those puzzles without reinstalling or clearing user data.

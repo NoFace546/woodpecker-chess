@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:drift/drift.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../features/solve/puzzle.dart';
@@ -9,6 +12,8 @@ class PuzzleRepository {
   PuzzleRepository(this._db);
 
   final AppDatabase _db;
+  static const bundledDisabledPuzzlesAsset =
+      'assets/config/disabled_puzzles.json';
   static const availablePuzzleClause =
       'NOT EXISTS (SELECT 1 FROM disabled_puzzles dp WHERE dp.puzzle_id = puzzles.id)';
 
@@ -117,6 +122,45 @@ class PuzzleRepository {
     );
   }
 
+  Future<int> applyBundledDisabledPuzzles() async {
+    final raw = await rootBundle.loadString(bundledDisabledPuzzlesAsset);
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map<String, dynamic>) {
+      throw const FormatException('Disabled puzzle list must be a JSON object');
+    }
+
+    final entries = decoded['disabled'];
+    if (entries is! List) {
+      throw const FormatException('Disabled puzzle list is missing disabled[]');
+    }
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    var applied = 0;
+    await _db.transaction(() async {
+      for (final entry in entries) {
+        final id = switch (entry) {
+          String value => value.trim(),
+          Map<String, dynamic> value => (value['id'] as String?)?.trim() ?? '',
+          _ => '',
+        };
+        if (id.isEmpty) continue;
+        final reason = entry is Map<String, dynamic>
+            ? (entry['reason'] as String?)?.trim()
+            : null;
+        await _db.customStatement(
+          '''
+          INSERT OR REPLACE INTO disabled_puzzles
+            (puzzle_id, reason, disabled_at)
+          VALUES (?, ?, ?)
+          ''',
+          [id, reason?.isEmpty == true ? null : reason, now],
+        );
+        applied += 1;
+      }
+    });
+    return applied;
+  }
+
   /// Inserts a single verified Lichess puzzle so the app has something to
   /// solve before the user generates the full asset DB. Real variety comes
   /// from running `tool/build_puzzle_db.dart` against the Lichess CSV.
@@ -179,7 +223,9 @@ final puzzleRepositoryProvider = Provider<PuzzleRepository>((ref) {
 /// Runs once on app start to ensure the puzzles table has at least the
 /// dev seed available before any feature reads from it.
 final puzzleSeedProvider = FutureProvider<void>((ref) async {
-  await ref.watch(puzzleRepositoryProvider).ensureSeeded();
+  final repo = ref.watch(puzzleRepositoryProvider);
+  await repo.ensureSeeded();
+  await repo.applyBundledDisabledPuzzles();
 });
 
 final currentPuzzleProvider = FutureProvider<Puzzle>((ref) async {
