@@ -219,6 +219,7 @@ class SettingsScreen extends ConsumerWidget {
           ListTile(
             leading: const Icon(Icons.info_outline),
             title: const Text('About Woodpecker'),
+            subtitle: const _AppVersionSubtitle(),
             onTap: () => context.push('/about'),
           ),
         ],
@@ -673,6 +674,22 @@ Steps to reproduce:
         ),
       );
     }
+  }
+}
+
+class _AppVersionSubtitle extends StatelessWidget {
+  const _AppVersionSubtitle();
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<PackageInfo>(
+      future: PackageInfo.fromPlatform(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) return const Text('Version ...');
+        final info = snapshot.data!;
+        return Text('Version ${info.version}+${info.buildNumber}');
+      },
+    );
   }
 }
 
