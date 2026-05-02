@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:woodpecker_chess/data/repositories/puzzle_repository.dart';
+import 'package:woodpecker_chess/data/repositories/user_state_repository.dart';
 import 'package:woodpecker_chess/features/solve/puzzle.dart';
 import 'package:woodpecker_chess/features/solve/solve_screen.dart';
 
@@ -16,6 +17,15 @@ void main() {
       ProviderScope(
         overrides: [
           eloRandomPuzzleProvider.overrideWith((ref) => pendingPuzzle.future),
+          userStateProvider.overrideWith(
+            (ref) => Stream.value(
+              const UserState(
+                elo: 1500,
+                attemptsTotal: 0,
+                calibrationStatus: 'pending',
+              ),
+            ),
+          ),
         ],
         child: const MaterialApp(home: SolveScreen()),
       ),
