@@ -46,6 +46,25 @@ class SettingsScreen extends ConsumerWidget {
           _SectionHeader(title: 'Account'),
           _ProStatusTile(),
           const Divider(),
+          _SectionHeader(title: 'Data safety'),
+          const _BackupSafetyCard(),
+          ListTile(
+            leading: const Icon(Icons.upload_file_outlined),
+            title: const Text('Export backup'),
+            subtitle: const Text(
+              'Save your sets, rounds, attempts, and Elo',
+            ),
+            onTap: () => _exportData(context, ref),
+          ),
+          ListTile(
+            leading: const Icon(Icons.restore_page_outlined),
+            title: const Text('Restore backup'),
+            subtitle: const Text(
+              'Replace this device data with a previous backup',
+            ),
+            onTap: () => _importData(context, ref),
+          ),
+          const Divider(),
           _SectionHeader(title: 'Puzzles'),
           SwitchListTile(
             title: const Text('Auto-advance after correct'),
@@ -181,55 +200,6 @@ class SettingsScreen extends ConsumerWidget {
                 'Delete sets, rounds, attempts, and Elo history'),
             onTap: () => _confirmReset(context, ref),
           ),
-          const Divider(),
-          _SectionHeader(title: 'Backup'),
-          ListTile(
-            leading: const Icon(Icons.upload_outlined),
-            title: Row(
-              children: [
-                const Text('Export data'),
-                if (!isPro) ...[
-                  const SizedBox(width: 8),
-                  const ProBadge(compact: true),
-                ],
-              ],
-            ),
-            subtitle:
-                const Text('Save a backup file you can share or restore'),
-            onTap: () => isPro
-                ? _exportData(context, ref)
-                : PaywallScreen.show(
-                    context,
-                    headline: 'Backup is a Pro feature',
-                    subhead:
-                        'Export and import your full database to share '
-                        'or move to another device.',
-                  ),
-          ),
-          ListTile(
-            leading: const Icon(Icons.download_outlined),
-            title: Row(
-              children: [
-                const Text('Import data'),
-                if (!isPro) ...[
-                  const SizedBox(width: 8),
-                  const ProBadge(compact: true),
-                ],
-              ],
-            ),
-            subtitle:
-                const Text('Replace all data with a previous backup'),
-            onTap: () => isPro
-                ? _importData(context, ref)
-                : PaywallScreen.show(
-                    context,
-                    headline: 'Backup is a Pro feature',
-                    subhead:
-                        'Export and import your full database to share '
-                        'or move to another device.',
-                  ),
-          ),
-          const Divider(),
           _SectionHeader(title: 'Feedback'),
           ListTile(
             leading: const Icon(Icons.bug_report_outlined),
@@ -707,6 +677,42 @@ class _SectionHeader extends StatelessWidget {
         style: Theme.of(context).textTheme.titleSmall?.copyWith(
               color: Theme.of(context).colorScheme.primary,
             ),
+      ),
+    );
+  }
+}
+
+class _BackupSafetyCard extends StatelessWidget {
+  const _BackupSafetyCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: scheme.primaryContainer,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.shield_outlined, color: scheme.onPrimaryContainer),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Export a backup before changing phones, switching build '
+                'types, or reinstalling. App updates should keep data, but '
+                'a backup gives you a safe fallback.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: scheme.onPrimaryContainer,
+                    ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
