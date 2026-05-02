@@ -39,6 +39,7 @@ class SettingsScreen extends ConsumerWidget {
     final confetti = ref.watch(confettiEnabledProvider);
     final autoFlip = ref.watch(autoFlipBoardProvider);
     final hintsEnabled = ref.watch(hintsEnabledProvider);
+    final lastBackupAt = ref.watch(lastBackupProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
@@ -47,7 +48,7 @@ class SettingsScreen extends ConsumerWidget {
           _ProStatusTile(),
           const Divider(),
           _SectionHeader(title: 'Data safety'),
-          const _BackupSafetyCard(),
+          _BackupSafetyCard(lastBackupAt: lastBackupAt),
           ListTile(
             leading: const Icon(Icons.upload_file_outlined),
             title: const Text('Export backup'),
@@ -350,15 +351,17 @@ Steps to reproduce:
   }
 
   Future<void> _confirmReset(BuildContext context, WidgetRef ref) async {
+    final backupText = _lastBackupText(ref.read(lastBackupProvider));
     final first = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Reset all progress?'),
-        content: const Text(
+        content: Text(
           'This will permanently delete:\n'
           '• All puzzle sets and rounds\n'
           '• All attempt history\n'
           '• Your Elo and calibration\n\n'
+          '$backupText\n\n'
           'The puzzle library is unaffected.',
         ),
         actions: [
@@ -589,6 +592,12 @@ Steps to reproduce:
         await SharePlus.instance.share(
           ShareParams(files: [file], subject: 'Woodpecker backup'),
         );
+        await ref.read(lastBackupProvider.notifier).markNow();
+        if (!context.mounted) return;
+        messenger.showSnackBar(const SnackBar(
+          content: Text('Backup exported.'),
+          behavior: SnackBarBehavior.floating,
+        ));
       } else {
         final bytes = await File(file.path).readAsBytes();
         final destPath = await FilePicker.platform.saveFile(
@@ -598,6 +607,8 @@ Steps to reproduce:
         );
         if (!context.mounted) return;
         if (destPath != null) {
+          await ref.read(lastBackupProvider.notifier).markNow();
+          if (!context.mounted) return;
           messenger.showSnackBar(SnackBar(
             content: Text('Saved to $destPath'),
             behavior: SnackBarBehavior.floating,
@@ -683,11 +694,14 @@ class _SectionHeader extends StatelessWidget {
 }
 
 class _BackupSafetyCard extends StatelessWidget {
-  const _BackupSafetyCard();
+  const _BackupSafetyCard({required this.lastBackupAt});
+
+  final DateTime? lastBackupAt;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final backupLabel = _lastBackupText(lastBackupAt);
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
       child: Container(
@@ -702,13 +716,25 @@ class _BackupSafetyCard extends StatelessWidget {
             Icon(Icons.shield_outlined, color: scheme.onPrimaryContainer),
             const SizedBox(width: 12),
             Expanded(
-              child: Text(
-                'Export a backup before changing phones, switching build '
-                'types, or reinstalling. App updates should keep data, but '
-                'a backup gives you a safe fallback.',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: scheme.onPrimaryContainer,
-                    ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    backupLabel,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          color: scheme.onPrimaryContainer,
+                        ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Export a backup before changing phones, switching build '
+                    'types, or reinstalling. App updates should keep data, '
+                    'but a backup gives you a safe fallback.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: scheme.onPrimaryContainer,
+                        ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -716,6 +742,16 @@ class _BackupSafetyCard extends StatelessWidget {
       ),
     );
   }
+}
+
+String _lastBackupText(DateTime? lastBackupAt) {
+  if (lastBackupAt == null) return 'No backup exported yet.';
+  final age = DateTime.now().difference(lastBackupAt);
+  if (age.inMinutes < 1) return 'Last backup: just now.';
+  if (age.inHours < 1) return 'Last backup: ${age.inMinutes} min ago.';
+  if (age.inDays < 1) return 'Last backup: ${age.inHours} h ago.';
+  if (age.inDays == 1) return 'Last backup: yesterday.';
+  return 'Last backup: ${age.inDays} days ago.';
 }
 
 /// Mini 2x2 board with a king on it, showing what the theme + piece set

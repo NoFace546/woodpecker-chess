@@ -10,6 +10,7 @@ class AppPreferences {
   static const _kTheme = 'app.themeMode';
   static const _kOnboarded = 'app.onboarded';
   static const _kAutoAdvance = 'app.autoAdvance';
+  static const _kLastBackupAt = 'app.lastBackupAt';
 
   bool get muted => _prefs.getBool(_kMuted) ?? false;
   Future<void> setMuted(bool value) => _prefs.setBool(_kMuted, value);
@@ -20,6 +21,14 @@ class AppPreferences {
   bool get autoAdvance => _prefs.getBool(_kAutoAdvance) ?? false;
   Future<void> setAutoAdvance(bool value) =>
       _prefs.setBool(_kAutoAdvance, value);
+
+  DateTime? get lastBackupAt {
+    final ms = _prefs.getInt(_kLastBackupAt);
+    return ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms);
+  }
+
+  Future<void> setLastBackupAt(DateTime value) =>
+      _prefs.setInt(_kLastBackupAt, value.millisecondsSinceEpoch);
 
   static const _kBoardTheme = 'app.boardTheme';
   static const _kPieceSet = 'app.pieceSet';
@@ -169,6 +178,29 @@ class _AutoAdvanceNotifier extends Notifier<bool> {
 
 final autoAdvanceProvider =
     NotifierProvider<_AutoAdvanceNotifier, bool>(_AutoAdvanceNotifier.new);
+
+class _LastBackupNotifier extends Notifier<DateTime?> {
+  @override
+  DateTime? build() {
+    final asyncPrefs = ref.watch(appPreferencesProvider);
+    return asyncPrefs.maybeWhen(
+      data: (p) => p.lastBackupAt,
+      orElse: () => null,
+    );
+  }
+
+  Future<void> markNow() async {
+    final now = DateTime.now();
+    state = now;
+    final prefs = await ref.read(appPreferencesProvider.future);
+    await prefs.setLastBackupAt(now);
+  }
+}
+
+final lastBackupProvider =
+    NotifierProvider<_LastBackupNotifier, DateTime?>(
+  _LastBackupNotifier.new,
+);
 
 enum AnimationSpeed {
   off(Duration.zero, 'Off'),
